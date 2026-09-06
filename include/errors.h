@@ -5,9 +5,8 @@
 #ifndef INCLUDE_ERRORS_H
 #define INCLUDE_ERRORS_H
 
-//errors
+// errors
 
-
-//warning
+// warning
 
 #endif /*INCLUDE_ERRORS_H*/
