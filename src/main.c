@@ -5,6 +5,8 @@
 int main(int argc, char *argv[], char *envp[])
 {
     // kernforgex
-
+    (void) argc;
+    (void) envp;
+    (void) argv;
     return 0;
 }

@@ -3,9 +3,12 @@
 # vim: set ts=8 sw=8 noet tw=80 cc=80 fo+=t :
 
 cmake_minimum_required(VERSION 3.10)
-project(kernforgex LANGUAGES C)
+project(kfx LANGUAGES C)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
 
 file(GLOB_RECURSE FORMAT_FILES
     CONFIGURE_DEPENDS
@@ -41,3 +44,9 @@ if(DOXYGEN_FOUND)
 endif()
 
 add_subdirectory(src)
+
+enable_testing()
+add_subdirectory(tests)
+
+#TODO: install
+#install(TARGETS program DESTINATION bin)

@@ -4,7 +4,9 @@
 
 file(GLOB_RECURSE SOURCE_FILES
     "${CMAKE_SOURCE_DIR}/include/*.c"
+    "${CMAKE_SOURCE_DIR}/include/${PROJECT_NAME}/*.c"
     "${CMAKE_SOURCE_DIR}/src/*.c"
+    "${CMAKE_SOURCE_DIR}/${PROJECT_NAME}/*.c"
     "${CMAKE_SOURCE_DIR}/${PROJECT_NAME}/*.c"
 )
 
@@ -21,7 +23,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/src/core/cli
+    "${CMAKE_SOURCE_DIR}/src/${PROJECT_NAME}"
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE
@@ -31,4 +33,5 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     -Werror
     -Wconversion
     -Wformat=2
+    -fmacro-prefix-map=${CMAKE_SOURCE_DIR}=.
 )

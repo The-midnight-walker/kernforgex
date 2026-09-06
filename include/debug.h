@@ -7,6 +7,26 @@
 
 #include <stdio.h>
 
+#define RED "\033[31m"
+#define GREEN "\033[32m"
+#define YELLOW "\033[33m"
+#define BLUE "\033[34m"
+#define MAGENTA "\033[35m"
+#define CYAN "\033[36m"
+#define RESET "\033[0m"
+
+#ifndef prfx_fmt
+#define prfx_fmt ""
+#endif
+
+#ifndef COLOR_PRFX_FMT
+#define COLOR_PRFX_FMT YELLOW
+#endif
+
+#ifndef COLOR_META_FMT
+#define COLOR_META_FMT GREEN
+#endif
+
 /**
  * @brief Log levels used by the logging system.
  *
@@ -37,50 +57,58 @@ unsigned int set_debug_loglevel(const unsigned int);
 unsigned int disable_debug_loglevel(const unsigned int);
 unsigned int enable_debug_loglevel(const unsigned int);
 
+/**
+ * @brief output format in debugging mode : [ status ] prfx_fmt: fmt [ function
+ * : file:line]
+ */
 #ifdef DEBUG
-#define dbg_log_debug(fmt, ...)                                                    \
+#define dbg_log(status, fmt, ...)                                              \
     do {                                                                       \
         fprintf(                                                               \
             stderr,                                                            \
-            "\n%s:%s:%d--|" fmt "\n",                                          \
-            __func__,                                                          \
-            __FILE__,                                                          \
-            __LINE__,                                                          \
+            "[ %s ] " COLOR_PRFX_FMT prfx_fmt RESET fmt,                       \
+            status,                                                            \
             ##__VA_ARGS__);                                                    \
+        fprintf(                                                               \
+            stderr,                                                            \
+            COLOR_META_FMT " [ %s : %s:%d ] \n" RESET,                         \
+            __func__,                                                          \
+            (strncmp(__FILE__, "./", 2) == 0 ? __FILE__ + 2 : __FILE__),       \
+            __LINE__);                                                         \
         fflush(stderr);                                                        \
     } while (0)
 #else
-#define dbg_log_debug(...) ((void)0)
+#define dbg_log(...) ((void)0)
 #endif /*DEBUG*/
 
 #define pr_fatal(fmt, ...)                                                     \
     do {                                                                       \
-        if (get_debug_loglevel() & DBG_LOGLEVEL_FATAL)                                   \
-            dbg_log_debug("[FATAL] " fmt, ##__VA_ARGS__);                          \
+        if (get_debug_loglevel() & DBG_LOGLEVEL_FATAL)                         \
+            dbg_log(RED "FATAL" RESET, fmt, ##__VA_ARGS__);                    \
     } while (0)
 
 #define pr_warn(fmt, ...)                                                      \
     do {                                                                       \
-        if (get_debug_loglevel() & DBG_LOGLEVEL_WARN)                                    \
-            dbg_log_debug("[WARN] " fmt, ##__VA_ARGS__);                           \
+        if (get_debug_loglevel() & DBG_LOGLEVEL_WARN)                          \
+            dbg_log(RED "WARN " RESET, fmt, ##__VA_ARGS__);                    \
     } while (0)
 
 #define pr_error(fmt, ...)                                                     \
     do {                                                                       \
-        if (get_debug_loglevel() & DBG_LOGLEVEL_ERROR)                                   \
-            dbg_log_debug("[ERR] " fmt, ##__VA_ARGS__);                            \
+        if (get_debug_loglevel() & DBG_LOGLEVEL_ERROR)                         \
+            dbg_log(RED "ERROR" RESET, fmt, ##__VA_ARGS__);                    \
     } while (0)
 
 #define pr_info(fmt, ...)                                                      \
     do {                                                                       \
-        if (get_debug_loglevel() & DBG_LOGLEVEL_INFO)                                    \
-            dbg_log_debug("[INFO] " fmt, ##__VA_ARGS__);                           \
+        if (get_debug_loglevel() & DBG_LOGLEVEL_INFO)                          \
+            dbg_log(YELLOW "INFO " RESET, fmt, ##__VA_ARGS__);                 \
     } while (0)
 
 #define pr_debug(fmt, ...)                                                     \
     do {                                                                       \
-        if ((get_debug_loglevel()) & DBG_LOGLEVEL_DEBUG)                                 \
-            dbg_log_debug("[DEBUG] " fmt, ##__VA_ARGS__);                          \
+        if ((get_debug_loglevel()) & DBG_LOGLEVEL_DEBUG)                       \
+            dbg_log(GREEN "DEBUG" RESET, fmt, ##__VA_ARGS__);                  \
     } while (0)
 
 #endif /*INCLUDE_DEBUG_H*/
