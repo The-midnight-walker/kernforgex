@@ -49,7 +49,7 @@ static int kfgx_cli_parser_impl(struct cli_ctx *ctx)
         ctx->cfg.remove.opt,
 
         /* sentinel */
-        {0, 0, 0, 0}};
+        (struct option){0}};
 
     pr_debug("parsing command line");
 
@@ -124,12 +124,6 @@ int cli_parser(struct cli_ctx *ctx)
 
     if (!ctx->argv[1])
         pr_info("execute program with no options");
-
-    if (!ctx->envp || !*ctx->envp)
-        pr_debug(
-            "argv=%p, argv[0]=%p\n",
-            ctx->envp,
-            (ctx->envp && *ctx->envp) ? *ctx->envp : NULL);
 
     return kfgx_cli_parser_impl(ctx);
 }

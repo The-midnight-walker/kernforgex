@@ -114,7 +114,6 @@ struct cli_config_struct {
 struct cli_ctx {
     const int argc;
     char *const *argv;
-    char *const *envp;
     struct cli_config_struct cfg;
 };
 
@@ -124,7 +123,7 @@ int init_cli_config(struct cli_config_struct *cfg);
 
 /*-----------| handlers */
 int handle(struct cli_config_struct *);
-int debug_kernel_handle(const char *, [[maybe_unused]] void *);
-int exec_shell_script(const char *, const char *);
+int debug_kernel_handle(char *const[], [[maybe_unused]] void *);
+int execve_shell_script(const char *, char *const[]);
 
 #endif /*INCLUDE_KERNFORGEX_H*/

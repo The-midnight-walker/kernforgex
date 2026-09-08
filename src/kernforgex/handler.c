@@ -16,21 +16,7 @@
 #include "clicntl.h"
 #include <stdlib.h>
 
-#define make_args(args, args_str, ...)                                         \
-    do {                                                                       \
-        if (asprintf(&(args), (args_str), ##__VA_ARGS__) == -1) {              \
-            pr_error("failed to alloc");                                       \
-            return -1;                                                         \
-        }                                                                      \
-    } while (0)
-
-#define destroy_args(args)                                                     \
-    do {                                                                       \
-        if ((args) != NULL) {                                                  \
-            free((void *)(args));                                              \
-            (args) = NULL;                                                     \
-        }                                                                      \
-    } while (0)
+extern char **envrion;
 
 #define IS_OPT_SET(opt, s_opt) ((opt.is_set)) ? (s_opt) : ' '
 

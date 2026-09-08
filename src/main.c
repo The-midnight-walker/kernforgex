@@ -4,13 +4,12 @@
 
 #include "clicntl.h"
 
-int main(int argc, char **argv, char **envp)
+int main(int argc, char **argv)
 {
     /*init command line context */
     struct cli_ctx ctx = {
         .argc = argc,
         .argv = argv,
-        .envp = envp,
     };
 
     /*init command line configuration options */
