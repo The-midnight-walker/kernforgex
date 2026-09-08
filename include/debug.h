@@ -74,7 +74,7 @@ unsigned int enable_debug_loglevel(const unsigned int);
             stderr,                                                            \
             COLOR_META_FMT " [ %s : %s:%d ] \n" RESET,                         \
             __func__,                                                          \
-            (strncmp(__FILE__, "./", 2) == 0 ? __FILE__ + 2 : __FILE__),       \
+            (strncmp(__FILE__, "./", 2) == 0 ? (__FILE__ + 2) : __FILE__),     \
             __LINE__);                                                         \
         fflush(stderr);                                                        \
     } while (0)
