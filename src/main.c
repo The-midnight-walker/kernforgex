@@ -6,8 +6,6 @@
 
 int main(int argc, char **argv, char **envp)
 {
-    int ret = 0;
-
     /*init command line context */
     struct cli_ctx ctx = {
         .argc = argc,
@@ -20,8 +18,16 @@ int main(int argc, char **argv, char **envp)
         return -1;
 
     /* parsing */
-    ret = cli_parser(&ctx);
+    if (cli_parser(&ctx)) {
+        return -1;
+        pr_error("failed to parsing command line");
+    }
+
+    if (handle(&ctx.cfg)) {
+        return -1;
+        pr_error("failed to handle command line arguments");
+    }
 
     pr_debug("program end...");
-    return ret;
+    return 0;
 }
