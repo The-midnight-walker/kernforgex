@@ -52,6 +52,8 @@
         (opt_ptr)->val = (new_val) ? strdup(new_val) : NULL;                   \
     } while (0)
 
+#define GET_FLAG_NAME(f) ((char *)((f).opt.name))
+
 typedef struct option_struct {
     const char *val;
     struct option opt;
