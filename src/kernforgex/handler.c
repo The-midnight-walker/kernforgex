@@ -13,13 +13,21 @@
 
 #define pr_prfx "handle: "
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include "clicntl.h"
+#include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 extern char **envrion;
 
 #define IS_OPT_SET(opt, s_opt) ((opt.is_set)) ? (s_opt) : ' '
-
 #define eval_str(str, def) (str) ? str : def
 
 void usage_impl(FILE *stream, const char *prog_name)
@@ -35,6 +43,8 @@ void usage_impl(FILE *stream, const char *prog_name)
 
 int usage(FILE *stream, const char *prog_name)
 {
+    char *name;
+
     if (!stream) {
         pr_error("stream=%p", (void *)stream);
         return -1;
@@ -45,8 +55,11 @@ int usage(FILE *stream, const char *prog_name)
         return -1;
     }
 
+    /* get basename from the program name */
+    name = strrchr(prog_name, '/');
+
     if (stdout == stream || stderr == stream) {
-        usage_impl(stream, prog_name);
+        usage_impl(stream, (name) ? name : prog_name);
         return 0;
     }
 
@@ -88,7 +101,6 @@ int clean_cli_cfg(struct cli_config_struct *cfg)
 int handle(struct cli_config_struct *cfg)
 {
     int ret = -1;
-    char *args = NULL;
 
     pr_debug("handling command line");
     if (!cfg) {
@@ -96,55 +108,151 @@ int handle(struct cli_config_struct *cfg)
         return ret;
     }
 
-    make_args(
-        args,
-        "%c %c %c %c %c",
-        IS_OPT_SET(cfg->remove, RM_S_OPT),
-        IS_OPT_SET(cfg->verbose, VERBOSE_S_OPT),
-        IS_OPT_SET(cfg->packages, PKG_S_OPT),
-        IS_OPT_SET(cfg->aliases, ALIAS_S_OPT),
-        IS_OPT_SET(cfg->files, FILES_S_OPT));
+    /* usage for help */
+    if (cfg->help.is_set) {
+        ret = usage(stdout, "");
+        return 0;
+    }
 
     /* debug kernel */
     if (cfg->kern_dbg.is_set)
-        ret = debug_kernel_handle(args, 0);
-
-    /* usage for help */
-    if (cfg->help.is_set)
-        ret = usage(stdout, "");
+        ret = debug_kernel_handle(
+            (char *const[]){
+                GET_FLAG_NAME(cfg->remove),
+                GET_FLAG_NAME(cfg->verbose),
+                GET_FLAG_NAME(cfg->packages),
+                GET_FLAG_NAME(cfg->files),
+                GET_FLAG_NAME(cfg->aliases),
+            },
+            0);
 
     if (cfg->vimrc.is_set)
         ret = 1;
 
-    destroy_args(args);
-
     return ret;
 }
 
-int debug_kernel_handle(const char *args, [[maybe_unused]] void *data)
+int debug_kernel_handle(char *const argv[], [[maybe_unused]] void *data)
 {
     if (data) {
         pr_debug("passed a cookie");
     } else {
-        pr_debug("no cookie passed data=%p", (void *)data);
+        pr_debug("no cookie passed, data=%p", (void *)data);
     }
 
-    return exec_shell_script(KERN_DBG_SH_PATH, args);
+    if (!argv)
+        pr_debug("args=%p", argv);
+
+    return execve_shell_script(KERN_DBG_SH_PATH, argv);
 }
 
-int exec_shell_script(const char *script_path, const char *args)
+int execve_shell_script_impl(const char *pathname, char *const argv[])
 {
-    if (!script_path) {
+    pid_t sh_pid;
+    int status, cur_pid, ret;
+    (void)pathname;
+    (void)argv;
+
+#define pr_debug_env()                                                         \
+    do {                                                                       \
+        char **ep;                                                             \
+        for (ep = environ; ep != NULL; ep++)                                   \
+            pr_debug("%s", *ep);                                               \
+    } while (0);
+
+    ret=-1;
+    switch ((sh_pid = fork())) {
+
+    case -1: /*error on fork creation */
+        pr_error("fork processus failed");
+        return ret;
+
+    case 0: /*child process */
+        cur_pid = getpid();
+        pr_info("[ %d ] on create child process", cur_pid);
+
+        /* print child process environment variables */
+        /*
+        pr_debug("[ %d ] child process environment variables", cur_pid);
+        pr_debug_environ();
+        */
+
+        /*child process end*/
+        pr_info("[ %d ] child process end execution normaly", cur_pid);
+        exit(0);
+        break;
+
+    default: /*parent or current process */
+        cur_pid = getpid();
+        pr_info("[ %d ] child process create with success", cur_pid);
+
+        do {
+            if (waitpid(sh_pid, &status, WUNTRACED | WCONTINUED) == -1) {
+                pr_error("[ %d ] wait action for child failed", cur_pid);
+                if (ECHILD == errno)
+                    pr_info("[ %d ] no children to wait for", cur_pid);
+                return ret;
+            }
+
+            /* print parent process environment variables */
+            /*
+            pr_debug("[ %d ] process environment variables", cur_pid);
+            pr_debug_environ();
+            */
+
+            if (WIFSTOPPED(status)) {
+                pr_info(
+                    "[ %d ] child stopped by signal %d",
+                    cur_pid,
+                    WSTOPSIG(status));
+            }
+
+#ifdef WIFCONTINUED
+            if (WIFCONTINUED(status)) {
+                pr_info(
+                    "[ %d ] child process continue on signal SIGCONT", cur_pid);
+            }
+#endif
+        } while (!WIFEXITED(status) && !WIFSIGNALED(status));
+
+        /* analyze child process status */
+        if ((WIFEXITED(status))){
+            ret = WEXITSTATUS(status);
+            pr_info(
+                "[ %d ] child exited normaly with status %d",
+                cur_pid,
+                ret);
+            }
+
+        if (WIFSIGNALED(status)) {
+            pr_info(
+                "[ %d ] child exited on signal %d"
+#ifdef WCOREDUMP
+                "with core dump generated"
+#endif
+                ,
+                cur_pid,
+                WTERMSIG(status));
+        }
+        break;
+    }
+    pr_debug("execute shell script end; ret=%d",ret);
+    return ret;
+}
+
+int execve_shell_script(const char *pathname, char *const argv[])
+{
+    if (!pathname) {
         pr_error(
             "script to execute path didn't have been specified script_path=%p",
-            (void *)script_path);
+            (void *)pathname);
         return -1;
     }
 
-    if (!args)
-        pr_debug("args=%p", (void *)args);
+    if (!argv)
+        pr_debug("args=%p", (void *)argv);
 
     pr_debug("execute shell script");
 
-    return 0;
+    return execve_shell_script_impl(pathname, argv);
 }
