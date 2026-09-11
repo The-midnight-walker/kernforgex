@@ -1,10 +1,32 @@
 // SPDX-License-Identifier: GPL-2.0
 //
-// vim: set ts=8 sw=8 noet tw=80 cc=80 fo+=t :
+// vim: set ts=8 sw=8 noet tw=80 cc=80 fo+=t :ù
 
-int main(int argc, char *argv[], char *envp[])
+#include "clicntl.h"
+
+int main(int argc, char **argv)
 {
-    // kernforgex
+    /*init command line context */
+    struct cli_ctx ctx = {
+        .argc = argc,
+        .argv = argv,
+    };
 
+    /*init command line configuration options */
+    if (init_cli_config(&ctx.cfg))
+        return -1;
+
+    /* parsing */
+    if (cli_parser(&ctx)) {
+        pr_error("failed to parsing command line");
+        return -1;
+    }
+
+    if (handle(&ctx.cfg)) {
+        pr_error("failed to handle command line arguments");
+        return -1;
+    }
+
+    pr_debug("program end...");
     return 0;
 }

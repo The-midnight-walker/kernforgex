@@ -1,0 +1,124 @@
+"==================================================
+" LEADER KEY (Must be defined before any mappings)
+"==================================================
+let mapleader = " "
+
+"===============================
+" GENERAL OPTIONS & PERFORMANCE
+"===============================
+set nocompatible
+syntax on
+filetype plugin indent on
+
+set number relativenumber
+set incsearch hlsearch ignorecase smartcase
+set scrolloff=5
+set wildmenu
+set wildmode=longest:full,full
+set updatetime=300
+set signcolumn=yes
+set hidden
+set mouse=a
+
+" Allow local .vimrc files with security constraints
+set exrc
+set secure
+
+"=========================================================
+" LINUX KERNEL INDENTATION STYLE (8-char tabs, no spaces)
+"=========================================================
+set tabstop=8
+set shiftwidth=8
+set noexpandtab
+set softtabstop=0
+set textwidth=79
+set cindent
+set cinoptions=:0,l1,t0,g0,(0
+
+"====================
+" PLUGINS (vim-plug)
+"====================
+call plug#begin('~/.vim/plugged')
+
+Plug 'junegunn/fzf', { 'do': { -> fzf#install() } }
+Plug 'junegunn/fzf.vim'
+Plug 'tpope/vim-fugitive'
+Plug 'dense-analysis/ale'
+Plug 'prabirshrestha/vim-lsp'
+Plug 'prabirshrestha/asyncomplete.vim'
+Plug 'prabirshrestha/asyncomplete-lsp.vim'
+Plug 'mbbill/undotree'
+
+call plug#end()
+
+"==========================================
+" CSCOPE && CTAGS (Kernel code navigation)
+"==========================================
+if filereadable("cscope.out")
+    cs add cscope.out
+elseif $CSCOPE_DB != ""
+    cs add $CSCOPE_DB
+endif
+
+set cscopetag
+set cscopequickfix=s-,c-,d-,i-,t-,e-
+set tags=./tags,tags;/
+
+nnoremap <C-\>s :cs find s <C-R>=expand("<cword>")<CR><CR>
+nnoremap <C-\>g :cs find g <C-R>=expand("<cword>")<CR><CR>
+nnoremap <C-\>c :cs find c <C-R>=expand("<cword>")<CR><CR>
+nnoremap <C-\>t :cs find t <C-R>=expand("<cword>")<CR><CR>
+nnoremap <C-\>e :cs find e <C-R>=expand("<cword>")<CR><CR>
+nnoremap <C-\>f :cs find f <C-R>=expand("<cfile>")<CR><CR>
+nnoremap <C-\>i :cs find i ^<C-R>=expand("<cfile>")<CR>$<CR>
+nnoremap <C-\>d :cs find d <C-R>=expand("<cword>")<CR><CR>
+
+"============================
+" LSP CONFIGURATION (clangd)
+"============================
+if executable('clangd')
+    au User lsp_setup call lsp#register_server({
+        \ 'name': 'clangd',
+        \ 'cmd': {server_info->['clangd', '--background-index', '--header-insertion=never']},
+        \ 'allowlist': ['c', 'cpp'],
+        \ })
+endif
+
+function! s:on_lsp_buffer_enabled() abort
+    setlocal omnifunc=lsp#complete
+    nmap <buffer> gd <plug>(lsp-definition)
+    nmap <buffer> gr <plug>(lsp-references)
+    nmap <buffer> gi <plug>(lsp-implementation)
+    nmap <buffer> <leader>rn <plug>(lsp-rename)
+    nmap <buffer> K <plug>(lsp-hover)
+    nmap <buffer> [g <plug>(lsp-previous-diagnostic)
+    nmap <buffer> ]g <plug>(lsp-next-diagnostic)
+endfunction
+
+augroup lsp_install
+    au!
+    autocmd User lsp_buffer_enabled call s:on_lsp_buffer_enabled()
+augroup END
+
+"===========================
+" ALE (Linter configuration)
+"===========================
+" Let clangd handle clang-tidy diagnostics; use ALE strictly for cppcheck
+let g:ale_linters = {'c': ['cppcheck']}
+let g:ale_lint_on_text_changed = 'never'
+let g:ale_lint_on_insert_leave = 1
+let g:ale_lint_on_save = 1
+
+"=================
+" CUSTOM MAPPINGS
+"=================
+" Run checkpatch.pl on the current file
+nnoremap <leader>cp :!perl scripts/checkpatch.pl --no-tree -f %<CR>
+
+" FZF mappings
+nnoremap <C-p> :Files<CR>
+nnoremap <leader>b :Buffers<CR>
+nnoremap <leader>rg :Rg<CR>
+
+" UndoTree mapping
+nnoremap <leader>u :UndotreeToggle<CR>
