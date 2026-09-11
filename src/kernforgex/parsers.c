@@ -29,7 +29,7 @@
 static void parser_usage_error(char *prog_name, char *msg, int opt)
 {
     if (msg != NULL && opt != 0)
-        fprintf(stderr, "%s (-%c)\n", msg, printable(opt));
+        fprintf(stderr, RED "%s (-%c)\n" RESET, msg, printable(opt));
     usage(stderr, prog_name);
     exit(-1);
 }
