@@ -7,7 +7,7 @@ file(GLOB_RECURSE SOURCE_FILES
     "${CMAKE_SOURCE_DIR}/src/kernforgex/*.c"
 )
 
-# executable name : kfx
+# executable name : kfgx
 add_executable(kfgx ${SOURCE_FILES})
 
 target_compile_features(${PROJECT_NAME} PRIVATE
