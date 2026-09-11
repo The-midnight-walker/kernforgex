@@ -5,7 +5,7 @@
 /**
  * @file      handler.c
  * @author    midnight walker
- * @brief     Execute options.
+ * @brief     Execute options and arguments with handlers.
  * @version   0.1
  * @date      2026-09-06
  * @copyright GNU General Public License v2.0
@@ -143,10 +143,15 @@ int debug_kernel_handle(char *const argv[], [[maybe_unused]] void *data)
     if (!argv)
         pr_debug("args=%p", argv);
 
+    if (check_script_pathname(KERN_DBG_SH_PATH))
+        return -1;
+
+    pr_info(
+        "debug kernel handler shell script pathanme is '%s'", KERN_DBG_SH_PATH);
     return execve_shell_script(KERN_DBG_SH_PATH, argv);
 }
 
-int execve_shell_script_impl(const char *pathname, char *const argv[])
+static int execve_shell_script_impl(const char *pathname, char *const argv[])
 {
     pid_t sh_pid;
     int status, cur_pid, ret;
@@ -160,7 +165,7 @@ int execve_shell_script_impl(const char *pathname, char *const argv[])
             pr_debug("%s", *ep);                                               \
     } while (0);
 
-    ret=-1;
+    ret = -1;
     switch ((sh_pid = fork())) {
 
     case -1: /*error on fork creation */
@@ -177,9 +182,16 @@ int execve_shell_script_impl(const char *pathname, char *const argv[])
         pr_debug_environ();
         */
 
-        /*child process end*/
-        pr_info("[ %d ] child process end execution normaly", cur_pid);
-        exit(0);
+        pr_info("[ %d ] execute the script by execve...", cur_pid);
+        errno = 0;
+        // execute the script
+        execve(pathname, argv, environ);
+
+        // the execve encounters an error
+        pr_error("error encountered with errno = %d", errno);
+        pr_error("%s", strerror(errno));
+        pr_error("[ %d ] child process end execution abnormaly", cur_pid);
+        exit(-1);
         break;
 
     default: /*parent or current process */
@@ -216,13 +228,10 @@ int execve_shell_script_impl(const char *pathname, char *const argv[])
         } while (!WIFEXITED(status) && !WIFSIGNALED(status));
 
         /* analyze child process status */
-        if ((WIFEXITED(status))){
+        if ((WIFEXITED(status))) {
             ret = WEXITSTATUS(status);
-            pr_info(
-                "[ %d ] child exited normaly with status %d",
-                cur_pid,
-                ret);
-            }
+            pr_info("[ %d ] child exited normaly with status %d", cur_pid, ret);
+        }
 
         if (WIFSIGNALED(status)) {
             pr_info(
@@ -236,7 +245,7 @@ int execve_shell_script_impl(const char *pathname, char *const argv[])
         }
         break;
     }
-    pr_debug("execute shell script end; ret=%d",ret);
+    pr_debug("execute shell script end; ret=%d", ret);
     return ret;
 }
 

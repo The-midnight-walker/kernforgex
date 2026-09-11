@@ -96,9 +96,32 @@ typedef struct flag_struct {
 #define VERBOSE_L_OPT "verbose"
 
 /* scripts files path*/
+/* checking */
+static inline int check_script_pathname(const char *script)
+{
+    if (!script) {
+        pr_error("script pathname is undefined");
+        return -1;
+    }
+
+    if (0 == strlen(script)) {
+        pr_error("script pathname is empty");
+        return -1;
+    }
+
+    return 0;
+}
+
+/* assets utilities directory */
+#ifndef CONFIG_ROOT_DIR
+#define CONFIG_ROOT_DIR "./assets/"
+#endif
+#ifndef SCRIPTS_ROOT_DIR
+#define SCRIPTS_ROOT_DIR CONFIG_ROOT_DIR "scripts/"
+#endif
 /* kernel debuging */
 #ifndef KERN_DBG_SH_PATH
-#define KERN_DBG_SH_PATH ""
+#define KERN_DBG_SH_PATH SCRIPTS_ROOT_DIR "debug_kernel.sh"
 #endif
 
 struct cli_config_struct {

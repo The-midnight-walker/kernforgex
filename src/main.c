@@ -18,13 +18,13 @@ int main(int argc, char **argv)
 
     /* parsing */
     if (cli_parser(&ctx)) {
-        return -1;
         pr_error("failed to parsing command line");
+        return -1;
     }
 
     if (handle(&ctx.cfg)) {
-        return -1;
         pr_error("failed to handle command line arguments");
+        return -1;
     }
 
     pr_debug("program end...");
