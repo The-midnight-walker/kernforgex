@@ -164,10 +164,11 @@ static int execve_shell_script_impl(const char *pathname, char *const argv[])
 
 #define pr_debug_env()                                                         \
     do {                                                                       \
-        char **ep;                                                             \
-        for (ep = environ; ep != NULL; ep++)                                   \
-            pr_debug("%s", *ep);                                               \
-    } while (0);
+        if (environ != NULL) {                                                 \
+            for (char **ep = environ; *ep != NULL; ep++)                       \
+                pr_debug("%s", *ep);                                           \
+        }                                                                      \
+    } while (0)
 
     ret = -1;
     switch ((sh_pid = fork())) {
@@ -183,7 +184,7 @@ static int execve_shell_script_impl(const char *pathname, char *const argv[])
         /* print child process environment variables */
         /*
         pr_debug("[ %d ] child process environment variables", cur_pid);
-        pr_debug_environ();
+        pr_debug_env();
         */
 
         pr_info("[ %d ] execute the script by execve...", cur_pid);
@@ -213,7 +214,7 @@ static int execve_shell_script_impl(const char *pathname, char *const argv[])
             /* print parent process environment variables */
             /*
             pr_debug("[ %d ] process environment variables", cur_pid);
-            pr_debug_environ();
+            pr_debug_env();
             */
 
             if (WIFSTOPPED(status)) {
@@ -239,7 +240,7 @@ static int execve_shell_script_impl(const char *pathname, char *const argv[])
 
         if (WIFSIGNALED(status)) {
             pr_info(
-                "[ %d ] child exited on signal %d"
+                "[ %d ] child exited on signal %d "
 #ifdef WCOREDUMP
                 "with core dump generated"
 #endif
