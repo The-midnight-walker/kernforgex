@@ -43,7 +43,7 @@ void usage_impl(FILE *stream, const char *prog_name)
 
 int usage(FILE *stream, const char *prog_name)
 {
-    char *name;
+    const char *name;
 
     if (!stream) {
         pr_error("stream=%p", (void *)stream);
@@ -57,6 +57,10 @@ int usage(FILE *stream, const char *prog_name)
 
     /* get basename from the program name */
     name = strrchr(prog_name, '/');
+    if (name != NULL)
+        name++;
+    else
+        name = prog_name;
 
     if (stdout == stream || stderr == stream) {
         usage_impl(stream, (name) ? name : prog_name);
