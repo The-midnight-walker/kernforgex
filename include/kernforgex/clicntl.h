@@ -142,6 +142,32 @@ struct cli_ctx {
     struct cli_config_struct cfg;
 };
 
+static inline int check_cli_ctx(const struct cli_ctx *ctx)
+{
+    if (!ctx) {
+        pr_error("cli_ctx=%p", (void *)ctx);
+        return -1;
+    }
+
+    if (ctx->argc == 0) {
+        pr_debug("argc=0");
+        return -1;
+    }
+
+    if (!ctx->argv || !*ctx->argv) {
+        pr_debug(
+            "argv=%p, argv[0]=%p\n",
+            ctx->argv,
+            (ctx->argv && *ctx->argv) ? *ctx->argv : NULL);
+        return -1;
+    }
+
+    if (!ctx->argv[1])
+        pr_info("no options");
+
+    return 0;
+}
+
 int cli_parser(struct cli_ctx *);
 int usage(FILE *stream, const char *prog_name);
 int init_cli_config(struct cli_config_struct *cfg);

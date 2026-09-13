@@ -136,6 +136,17 @@ int handle(struct cli_config_struct *cfg)
     return ret;
 }
 
+int handle(struct cli_ctx *ctx)
+{
+    pr_debug("handling command line");
+    if (check_cli_ctx(ctx)) {
+        pr_error("invalid command line context arguments passed");
+        return -1;
+    }
+
+    return handle_impl(ctx);
+}
+
 int debug_kernel_handle(char *const argv[], [[maybe_unused]] void *data)
 {
     if (data) {

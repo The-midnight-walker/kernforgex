@@ -104,26 +104,10 @@ static int kfgx_cli_parser_impl(struct cli_ctx *ctx)
 
 int cli_parser(struct cli_ctx *ctx)
 {
-    if (!ctx) {
-        pr_error("cli_ctx=%p", (void *)ctx);
+    if (check_cli_ctx(ctx)) {
+        pr_error("invalid command line context arguments passed");
         return -1;
     }
-
-    if (ctx->argc == 0) {
-        pr_debug("argc=0");
-        return -1;
-    }
-
-    if (!ctx->argv || !*ctx->argv) {
-        pr_debug(
-            "argv=%p, argv[0]=%p\n",
-            ctx->argv,
-            (ctx->argv && *ctx->argv) ? *ctx->argv : NULL);
-        return -1;
-    }
-
-    if (!ctx->argv[1])
-        pr_info("execute program with no options");
 
     return kfgx_cli_parser_impl(ctx);
 }
