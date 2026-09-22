@@ -1,299 +1,163 @@
+#!/bin/sh
+#
 # SPDX-License-Identifier: GPL-2.0
 #
 # vim: set ts=8 sw=8 noet tw=80 cc=80 fo+=t :
 
-MISSING_PACKAGES=()
-INSTALLED_PACKAGES=()
-declare -A MISSING_TOOLS
+# ====================
+# CONFIGURATIONS FILES
+# ====================
+# NOTE: resolved relative to KFX_ROOT when the caller exports it (e.g. from
+# kgdb.sh, which already computes its own SCRIPT_DIR). Falls back to the
+# previous behaviour (relative to cwd) when unset, so nothing breaks for
+# callers that don't set it.
+CONF_FILE="${KFX_ROOT:-..}/configs/kernforgex.conf"
+PARSER_SH="${KFX_ROOT:-..}/scripts/parser.sh"
 
-RED="\033[1;31m"
-GREEN="\033[1;32m"
-YELLOW="\033[1;33m"
-NC="\033[0m"
+. "$PARSER_SH"
+
+#=============
+# OUTPUT STYLE
+#=============
+# ANSI color definitions (POSIX printf compatible)
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
 OK="${GREEN}[ ok ]${NC}"
 NOT="${RED}[ X  ]${NC}"
 
+print_y(){
+    printf "%b%s%b\n" "$YELLOW" "$1" "$NC"
+}
+
+print_g(){
+    printf "%b%s%b\n" "$GREEN" "$1" "$NC"
+}
+
+print_r(){
+    printf "%b%s%b\n" "$RED" "$1" "$NC"
+}
+
 print_err() {
-    local msg="$1"
-    echo -e "${RED}${msg}${NC}"
+    # Print error message in red
+    print_r "$1"
 }
 
 print_success() {
-    local msg="$1"
-    echo -e "${GREEN}${msg}${NC}"
+    # Print success message in green
+    print_g "$1"
+
 }
 
 print_info() {
-    local msg="$1"
-    echo -e "${YELLOW}${msg}${NC}"
+    # Print informational message in yellow only if verbose mode is enabled
+    # NOTE: default changed 1 -> 0. VERBOSE is only ever set to 1 by -v in
+    # kgdb.sh; with a default of 1 every info message printed unconditionally
+    # and -v had no effect.
+    if [ "${VERBOSE:-0}" -eq 1 ]; then
+        print_y "$1"
+    fi
 }
+
+#==============================
+# RIGHTS, FILES AND PRIVILIEGES
+#==============================
 
 IS_LOGIN_ROOT() {
-    # verify this script is running with root privilege
-
-    if [ "$EUID" -ne 0 ]; then
-        print_err 'Not login as root to carry out this operation : Permission denied'
-        exit -1
-    fi
-    return
-}
-
-add_maps() {
-    # concatenate two maps
-
-    local -n dest="$1"
-    local -n src=$2
-
-    for key in "${!src[@]}"; do
-        dest["$key"]="${src[$key]}"
-    done
-}
-
-IS_INSTALLED_PACKAGES() {
-    # check tools which are already install and adding
-    # | install packages in INSTALLED_PACKAGES  for removing
-    # | missing packages in MISSSING_PACKAGES for installation
-
-    local -n packages="$1"
-    local to="$2" #for installation or removing
-
-    IS_LOGIN_ROOT
-
-    for pkg in "${packages[@]}"; do
-        if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
-            echo -e "${NOT} '$pkg'"
-            if [ "$to" == "i" ]; then
-                MISSING_PACKAGES+=("$pkg") #installation purpose
-            fi
-        else
-            echo -e "${OK} '$pkg'"
-            if [ "$to" == "u" ]; then
-                INSTALLED_PACKAGES+=("$pkg") # removing purpose
-            fi
-        fi
-    done
-
-    if [[ "${#MISSING_PACKAGES[@]}" -gt 0 && "$to" == "i" ]]; then
+    # Verify that this script is running with root privileges
+    # NOTE: return instead of exit. This function is sourced and called from
+    # inside `if IS_INSTALLED_PACKAGES ...; then` contexts; an exit here
+    # would terminate the caller's shell (including an interactive shell
+    # this file was sourced into), not just the operation in progress.
+    if [ "$(id -u)" -ne 0 ]; then
+        print_err 'Not logged in as root to carry out this operation: Permission denied'
         return 1
     fi
-
-    if [[ "${#INSTALLED_PACKAGES[@]}" -gt 0 && "$to" == "u" ]]; then
-        return 1
-    fi
-
     return 0
-}
-
-IS_DOWNLOAD_TOOLS() {
-    # check tools which are already download under the $HOME/lkm/tools directory
-    # if not ,these latter are adding in the MISSING_TOOLS["$tool"]="${tools[$tool]}" array
-
-    local -n tools="$1"
-
-    for tool in "${!tools[@]}"; do
-        if [ ! -f "$tool" ]; then
-            echo -e "${NOT} '$tool'"
-            MISSING_TOOLS["$tool"]="${tools[$tool]}"
-        else
-            echo -e "${OK} '$tool'"
-        fi
-    done
-}
-
-INSTALL_PACKAGES() {
-    # install all missing packages
-
-    local FAILLED_PACKAGES=()
-
-    if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
-        IS_LOGIN_ROOT
-
-        print_info '--- installing missing packages ---'
-
-        apt-get update >/dev/null 2>&1
-
-        for pkg in "${MISSING_PACKAGES[@]}"; do
-            echo -n "[ $pkg ]──╼ "
-            if ! DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg" >/dev/null 2>&1; then
-                echo -en "${RED}❌${NC}"
-                echo
-                FAILLED_PACKAGES+=("$pkg")
-            else
-                echo -en "${GREEN}✔${NC}"
-                echo
-            fi
-        done
-    else
-        return
-    fi
-
-    if [ ${#FAILLED_PACKAGES[@]} -gt 0 ]; then
-        print_err "--| following packages installation failled"
-
-        for pkg in "${FAILLED_PACKAGES[@]}"; do
-            echo -n ""$pkg"  "
-        done
-        echo
-    else
-        print_success "---| successfull finish all packages installation"
-    fi
-
-    return 0
-}
-
-REMOVE_PACKAGES() {
-    # uninstall packages
-
-    local FAILLED_PACKAGES=()
-
-    if [ ${#INSTALLED_PACKAGES[@]} -gt 0 ]; then
-        IS_LOGIN_ROOT
-
-        print_info '--- removing packages ---'
-
-        for pkg in "${INSTALLED_PACKAGES[@]}"; do
-            echo -n "[ $pkg ]──╼ "
-            if ! (DEBIAN_FRONTEND=noninteractive apt-get remove -y "$pkg" >/dev/null 2>&1 && apt-get purge -y "$pkg" >/dev/null 2>&1); then
-                echo -en "${RED}❌${NC}"
-                echo
-                FAILLED_PACKAGES+=("$pkg")
-            else
-                echo -en "${GREEN}✔${NC}"
-                echo
-            fi
-        done
-    else
-        return
-    fi
-
-    apt-get clean
-
-    if [ ${#FAILLED_PACKAGES[@]} -gt 0 ]; then
-        print_err "---| following packages removing failled"
-
-        for pkg in "${FAILLED_PACKAGES[@]}"; do
-            echo ""$pkg"  "
-        done
-        echo
-    else
-        print_success "---| successfull finish packages removing"
-    fi
-
-    return
-
-}
-
-ERASE_ALIASES() {
-    # delete fgx alias in ~/.bashrc file
-
-    local bashrc=~/.bashrc
-
-    sed -i '/#   ===========================/,/#  ===========================/d' "$bashrc"
-}
-
-GET_ALIASES() {
-    # collecting all aliases to set
-
-    local -n input_map="$1"
-
-    for alias in "${!input_map[@]}"; do
-        ALIASES["$alias"]="${input_map[$alias]}"
-    done
-}
-
-SET_ALIASES() {
-    # set aliases in the ~/.bashrc file
-
-    local bashrc=~/.bashrc
-
-    if [ "${#ALIASES[@]}" -eq 0 ]; then
-        return
-    fi
-
-    echo "overwrite previous aliases.."
-    ERASE_ALIASES
-
-    print_info "--- setting new aliases ---"
-
-    cat <<'EOF' >>"$bashrc"
-#   ===========================
-#    [ KERNFORGEX - ALIASES ]
-#   ===========================
-EOF
-
-    for alias in "${!ALIASES[@]}"; do
-        local value="${ALIASES[$alias]}"
-        echo "alias $alias='$value'" | tee -a "$bashrc"
-    done
-
-    echo "#  ===========================" >>"$bashrc"
-}
-
-DOWNLOAD() {
-    # dowload files which missing
-    # @MISSING_TOOLS - dictionnary array : MISSING_TOOLS['tool_path'] = 'download_url'
-
-    IS_LOGIN_ROOT
-
-    if [ ${#MISSING_TOOLS[@]} -eq 0 ]; then
-        return 0
-    fi
-
-    print_info '--- downloading missing tools ---'
-
-    for tool_path in "${!MISSING_TOOLS[@]}"; do
-        local url="${MISSING_TOOLS[$tool_path]}"
-        local target_dir
-        target_dir=$(dirname "$tool_path")
-
-        mkdir -p "$target_dir" 2>/dev/null
-
-        if wget -O "$tool_path" "$url" >/dev/null 2>&1; then
-            print_success "Successfully downloaded '$tool_path'"
-        else
-            print_err "Failed to download '$tool_path' from '$url'"
-        fi
-    done
 }
 
 ADD_RIGHT_X() {
-    # add the executable right 'x' to a objetc : a file or a directory
+    # Add execution permission (+x) to a file or directory
+    obj="$1"
 
-    local obj="$1"
-
-    if [ ! -f "$obj" ]; then
-        pr_err "file/directory '$obj' does'nt exists"
+    if [ ! -e "$obj" ]; then
+        print_err "file/directory '$obj' does not exist"
         return 1
     fi
 
     if [ ! -x "$obj" ]; then
         print_info "*** chmod +x '$obj' ***"
-        chmod +x "$obj" 2>/dev/null || true
+        chmod +x "$obj" 2>/dev/null || {
+            print_err "Failed to chmod +x '$obj'"
+            return 1
+        }
+    fi
+
+    return 0
+}
+
+ADD_RIGHT_W() {
+    # Add write permission (+w) to a file or directory
+    obj="$1"
+
+    if [ ! -e "$obj" ]; then
+        print_err "file/directory '$obj' does not exist"
+        return 1
+    fi
+
+    if [ ! -w "$obj" ]; then
+        print_info "*** chmod +w '$obj' ***"
+        chmod +w "$obj" 2>/dev/null || {
+            print_err "Failed to chmod +w '$obj'"
+            return 1
+        }
+    fi
+
+    return 0
+}
+
+ADD_RIGHT_R() {
+    # Add read permission (+r) to a file or directory
+    obj="$1"
+
+    if [ ! -e "$obj" ]; then
+        print_err "file/directory '$obj' does not exist"
+        return 1
+    fi
+
+    if [ ! -r "$obj" ]; then
+        print_info "*** chmod +r '$obj' ***"
+        chmod +r "$obj" 2>/dev/null || {
+            print_err "Failed to chmod +r '$obj'"
+            return 1
+        }
     fi
 
     return 0
 }
 
 ADD_DIR() {
-    # create a directory with exclusive private rights to the user
-
-    local dir="$1"
+    # Create a directory path with private user-only permissions (0700) on all created levels
+    dir="$1"
 
     if [ ! -d "$dir" ]; then
-        print_info "*** mkdir -m 0700 -p '$dir'***"
-        mkdir 0700 -p "$dir" 2>/dev/null || true
+        print_info "*** mkdir -m 0700 -p '$dir' ***"
+        # Temporarily restrict umask so intermediate parent directories are also private
+        if ! ( umask 0077 && mkdir -p "$dir" ) 2>/dev/null; then
+            print_err "Failed to create directory '$dir'"
+            return 1
+        fi
     fi
 
     return 0
 }
 
 ADD_FILE() {
-    # create a file
-    # @file must be a absolute path otherwise file will be create in the current  directory
-
-    local file="$1"
-    local dir
+    # Create a file
+    # File parameter must be an absolute path, otherwise created in current directory
+    file="$1"
     dir=$(dirname "$file")
 
     if [ ! -d "$dir" ]; then
@@ -303,7 +167,183 @@ ADD_FILE() {
 
     if [ ! -f "$file" ]; then
         print_info "*** touch '$file' ***"
-        touch "$file"
+        touch "$file" || {
+            print_err "Failed to create file '$file'"
+            return 1
+        }
+    fi
+
+    return 0
+}
+
+# write_proc <path> <value> <label>
+# Single point of truth for every /proc write: checks the value is set,
+# checks the file is writable, reports precisely on failure.
+write_proc() {
+    wp_path="$1"
+    wp_value="$2"
+    wp_label="$3"
+
+    if [ -z "$wp_value" ]; then
+        print_err "$wp_label variable is empty or not set"
+        return 1
+    fi
+
+    if [ ! -w "$wp_path" ]; then
+        print_err "Cannot write to $wp_path (file missing or permission denied)"
+        return 1
+    fi
+
+    if ! printf '%s' "$wp_value" > "$wp_path" 2>/dev/null; then
+        print_err "Failed to write to $wp_path"
+        return 1
+    fi
+
+    return 0
+}
+
+# =======
+# PARSING
+# =======
+# parses kernforgex main configuration file and loads it
+load_config() {
+    if ! parser "$CONF_FILE" ; then    
+        print_err "Failed to parse configuration file '$CONF_FILE'"
+        return 1
+    fi
+    return 0
+}
+
+#========
+# ALIASES
+#========
+
+#TODO: alias removing and setting in a hidden file .aliases under ~/.kernforgex
+
+#===================================
+# PACKAGES INSTALLATION AND REMOVING
+#===================================
+
+MISSING_PACKAGES=""
+INSTALLED_PACKAGES=""
+
+IS_INSTALLED_PACKAGES() {
+    # Check package statuses and populate global variables:
+    # - INSTALLED_PACKAGES for removal ("r")
+    # - MISSING_PACKAGES for installation ("i")
+
+    packages_list="$1"
+    to="$2" # "i" for installation, "r" for removal
+
+    # NOTE: reset on every call, otherwise results from a previous call in
+    # the same shell session (script sourced, or called more than once)
+    # accumulate instead of being recomputed.
+    MISSING_PACKAGES=""
+    INSTALLED_PACKAGES=""
+
+    # Iterate over space-separated package names
+    for pkg in $packages_list; do
+        if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+            printf "%b '%s'\n" "$NOT" "$pkg"
+            if [ "$to" = "i" ]; then
+                MISSING_PACKAGES="$MISSING_PACKAGES $pkg"
+            fi
+        else
+            printf "%b '%s'\n" "$OK" "$pkg"
+            if [ "$to" = "r" ]; then
+                INSTALLED_PACKAGES="$INSTALLED_PACKAGES $pkg"
+            fi
+        fi
+    done
+
+    # Check non-empty strings instead of array length
+    if [ -n "$MISSING_PACKAGES" ] && [ "$to" = "i" ]; then
+        return 1
+    fi
+
+    if [ -n "$INSTALLED_PACKAGES" ] && [ "$to" = "r" ]; then
+        return 1
+    fi
+
+    return 0
+}
+
+INSTALL_PACKAGES() {
+    # Install all missing packages listed in global $MISSING_PACKAGES
+
+    FAILED_PACKAGES=""
+
+    return
+    if [ -n "$MISSING_PACKAGES" ]; then
+        IS_LOGIN_ROOT || return 1
+
+        print_info '--- installing missing packages ---'
+
+        apt-get update >/dev/null 2>&1
+
+        for pkg in $MISSING_PACKAGES; do
+            printf "[ %s ]──╼ " "$pkg"
+            if ! DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg" >/dev/null 2>&1; then
+                printf "%b❌%b\n" "$RED" "$NC"
+                FAILED_PACKAGES="$FAILED_PACKAGES $pkg"
+            else
+                printf "%b✔%b\n" "$GREEN" "$NC"
+            fi
+        done
+    else
+        return 0
+    fi
+
+    if [ -n "$FAILED_PACKAGES" ]; then
+        print_err "--| following packages installation failed:"
+
+        for pkg in $FAILED_PACKAGES; do
+            printf "%s  " "$pkg"
+        done
+        printf "\n"
+        return 1
+    else
+        print_success "---| successfully finished all packages installation"
+    fi
+
+    return 0
+}
+
+REMOVE_PACKAGES() {
+    # Uninstall packages listed in global $INSTALLED_PACKAGES
+
+    FAILED_PACKAGES=""
+
+    if [ -n "$INSTALLED_PACKAGES" ]; then
+        IS_LOGIN_ROOT || return 1
+
+        print_info '--- removing packages ---'
+
+        for pkg in $INSTALLED_PACKAGES; do
+            printf "[ %s ]──╼ " "$pkg"
+            if ! (DEBIAN_FRONTEND=noninteractive apt-get remove -y "$pkg" >/dev/null 2>&1 && apt-get purge -y "$pkg" >/dev/null 2>&1); then
+                printf "%b❌%b\n" "$RED" "$NC"
+                FAILED_PACKAGES="$FAILED_PACKAGES $pkg"
+            else
+                printf "%b✔%b\n" "$GREEN" "$NC"
+            fi
+        done
+    else
+        return 0
+    fi
+
+    apt-get clean
+
+    if [ -n "$FAILED_PACKAGES" ]; then
+        print_err "---| following packages removal failed:"
+
+        for pkg in $FAILED_PACKAGES; do
+            printf "%s  " "$pkg"
+        done
+        printf "\n"
+        return 1
+    else
+        print_success "---| successfully finished packages removal"
     fi
 
     return 0

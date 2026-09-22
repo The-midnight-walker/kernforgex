@@ -13,168 +13,143 @@
 #include <getopt.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-#define INIT_FLAG(flag_struct_ptr, l_opt, has_arg_val, s_opt)                  \
-    do {                                                                       \
-        (flag_struct_ptr)->is_set = 0;                                         \
-        (flag_struct_ptr)->opt.name = (l_opt);                                 \
-        (flag_struct_ptr)->opt.has_arg = (has_arg_val);                        \
-        (flag_struct_ptr)->opt.flag = &(flag_struct_ptr)->is_set;              \
-        (flag_struct_ptr)->opt.val = (s_opt);                                  \
-    } while (0)
+/* Forward declarations */
+struct cli_ctx;
 
-#define INIT_OPTION(opt_ptr, long_name, has_arg_val, short_name)               \
-    do {                                                                       \
-        (opt_ptr)->is_set = 0;                                                 \
-        (opt_ptr)->val = NULL;                                                 \
-        (opt_ptr)->opt.name = (long_name);                                     \
-        (opt_ptr)->opt.has_arg = (has_arg_val);                                \
-        (opt_ptr)->opt.flag = &(opt_ptr)->is_set;                              \
-        (opt_ptr)->opt.val = (short_name);                                     \
-    } while (0)
+/**
+ * @brief Identifiers for all supported CLI options.
+ *
+ * To add a new option, add an enum member before OPT_COUNT
+ * and add its descriptor row in default_cli_options[] in handler.c.
+ */
+typedef enum {
+    OPT_HELP,
+    OPT_VERBOSE,
+    OPT_KERN_DBG,
+    OPT_PACKAGES,
+    OPT_REMOVE,
+    OPT_ALIASES,
+    OPT_FILES,
+    OPT_VIMRC,
+    OPT_MAKEFILE,
+    OPT_COUNT
+} cli_opt_id_t;
 
-#define RESET_OPTION(opt_ptr)                                                  \
-    do {                                                                       \
-        (opt_ptr)->is_set = 0;                                                 \
-        if ((opt_ptr)->val) {                                                  \
-            free((void *)(opt_ptr)->val);                                      \
-            (opt_ptr)->val = NULL;                                             \
-        }                                                                      \
-    } while (0)
+/**
+ * @brief Declarative option descriptor and runtime state.
+ */
+typedef struct cli_opt {
+    cli_opt_id_t id;   /**< Unique option identifier */
+    char s_opt;        /**< Short flag character (e.g. 'h'), or 0 if none */
+    const char *l_opt; /**< Long flag string (e.g. "help"), or NULL if none */
+    int has_arg;       /**< no_argument, required_argument, optional_argument */
+    const char
+        *arg_name; /**< Argument placeholder name for usage (e.g. "<path>") */
+    const char *desc; /**< Human-readable help description */
 
-#define SET_OPTION(opt_ptr, new_val)                                           \
-    do {                                                                       \
-        if ((opt_ptr)->val) {                                                  \
-            free((void *)(opt_ptr)->val);                                      \
-        }                                                                      \
-        (opt_ptr)->is_set = 1;                                                 \
-        (opt_ptr)->val = (new_val) ? strdup(new_val) : NULL;                   \
-    } while (0)
+    /* Runtime state (populated during parsing) */
+    bool is_set; /**< True if the option was matched on the CLI */
+    const char
+        *arg_val; /**< Captured argument value (if has_arg != no_argument) */
 
-#define GET_FLAG_NAME(f) ((char *)((f).opt.name))
+    /* Optional action callback */
+    int (*action)(struct cli_ctx *ctx, struct cli_opt *opt);
+} cli_opt_t;
 
-typedef struct option_struct {
-    const char *val;
-    struct option opt;
-} opt_t;
+/**
+ * @brief Command line context holding arguments and option states.
+ */
+struct cli_ctx {
+    int argc;
+    char *const *argv;
+    cli_opt_t opts[OPT_COUNT];
+    size_t opts_count;
+};
 
-typedef struct flag_struct {
-    int is_set;
-    struct option opt;
-} flag_t;
-
-/*kernel debug */
-#define HELP_S_OPT 'h'
-#define HELP_L_OPT "help"
-/*verbose*/
-#define VERBOSE_S_OPT 'v'
-#define VERBOSE_L_OPT "verbose"
-/*kernel debug */
-#define KERN_DBG_S_OPT 'd'
-#define KERN_DBG_L_OPT "kern-dbg"
-/*packages */
-#define PKG_S_OPT 'p'
-#define PKG_L_OPT "packages"
-/*removing */
-#define RM_S_OPT 'r'
-#define RM_L_OPT "remove"
-/*set aliases */
-#define ALIAS_S_OPT 'a'
-#define ALIAS_L_OPT "aliases"
-/*set files */
-#define FILES_S_OPT 'f'
-#define FILES_L_OPT "files"
-/*vimrc */
-#define VIMRC_S_OPT 'c'
-#define VIMRC_L_OPT "vimrc"
-/*makefile */
-#define MAKEFILE_S_OPT 'm'
-#define MAKEFILE_L_OPT "makefile"
-/*install*/
-#define VERBOSE_S_OPT 'v'
-#define VERBOSE_L_OPT "verbose"
-
-/* scripts files path*/
-/* checking */
-static inline int check_script_pathname(const char *script)
-{
-    if (!script) {
-        pr_error("script pathname is undefined");
-        return -1;
-    }
-
-    if (0 == strlen(script)) {
-        pr_error("script pathname is empty");
-        return -1;
-    }
-
-    return 0;
-}
-
-/* assets utilities directory */
+/* Assets and scripts directories */
 #ifndef CONFIG_ROOT_DIR
 #define CONFIG_ROOT_DIR "./assets/"
 #endif
 #ifndef SCRIPTS_ROOT_DIR
 #define SCRIPTS_ROOT_DIR CONFIG_ROOT_DIR "scripts/"
 #endif
-/* kernel debuging */
 #ifndef KERN_DBG_SH_PATH
-#define KERN_DBG_SH_PATH SCRIPTS_ROOT_DIR "debug_kernel.sh"
+#define KERN_DBG_SH_PATH SCRIPTS_ROOT_DIR "kdbg.sh"
 #endif
 
-struct cli_config_struct {
-    flag_t help;
-    flag_t verbose;
-    flag_t remove;
-    flag_t packages;
-    flag_t aliases;
-    flag_t files;
-    flag_t makefile;
-    flag_t vimrc;
-    flag_t kern_dbg;
-};
+/* Validation helpers */
+static inline int check_script_pathname(const char *script)
+{
+    if (!script) {
+        pr_error("script pathname is undefined");
+        return -1;
+    }
+    if (strlen(script) == 0) {
+        pr_error("script pathname is empty");
+        return -1;
+    }
+    return 0;
+}
 
-struct cli_ctx {
-    const int argc;
-    char *const *argv;
-    struct cli_config_struct cfg;
-};
+#define GET_FLAG_NAME(f) ((f).is_set ? (char *)((f).opt.name) : NULL)
+
+/*TODO:
+Compile-time type check enforcing strict 'struct cli_ctx *' usage
+ define CHECK_CLI_CTX_TYPE(ptr) \
+   _Generic((ptr), \
+        struct cli_ctx *: (ptr), \
+       const struct cli_ctx *: (ptr) \
+   )
+   */
 
 static inline int check_cli_ctx(const struct cli_ctx *ctx)
 {
     if (!ctx) {
-        pr_error("cli_ctx=%p", (void *)ctx);
+        pr_error("cli_ctx is NULL");
         return -1;
     }
-
     if (ctx->argc == 0) {
         pr_debug("argc=0");
         return -1;
     }
-
     if (!ctx->argv || !*ctx->argv) {
-        pr_debug(
-            "argv=%p, argv[0]=%p\n",
-            ctx->argv,
-            (ctx->argv && *ctx->argv) ? *ctx->argv : NULL);
+        pr_debug("argv is NULL or empty");
         return -1;
     }
-
-    if (!ctx->argv[1])
-        pr_info("no options");
-
     return 0;
 }
 
-int cli_parser(struct cli_ctx *);
-int usage(FILE *stream, const char *prog_name);
-int init_cli_config(struct cli_config_struct *cfg);
+/* Query helpers */
+static inline bool cli_has_flag(const struct cli_ctx *ctx, cli_opt_id_t id)
+{
+    if (!ctx || id >= OPT_COUNT)
+        return false;
+    return ctx->opts[id].is_set;
+}
 
-/*-----------| handlers */
-int handle(struct cli_config_struct *);
-int debug_kernel_handle(char *const[], [[maybe_unused]] void *);
-int execve_shell_script(const char *, char *const[]);
+static inline const char *
+cli_get_arg(const struct cli_ctx *ctx, cli_opt_id_t id)
+{
+    if (!ctx || id >= OPT_COUNT)
+        return NULL;
+    return ctx->opts[id].arg_val;
+}
 
-#endif /*INCLUDE_KERNFORGEX_H*/
+static inline cli_opt_t *cli_get_opt(struct cli_ctx *ctx, cli_opt_id_t id)
+{
+    if (!ctx || id >= OPT_COUNT)
+        return NULL;
+    return &ctx->opts[id];
+}
+
+/* Public API functions */
+int cli_ctx_init(struct cli_ctx *ctx, int argc, char *const *argv);
+int cli_parser(struct cli_ctx *ctx);
+int usage(FILE *stream, const char *prog_name, const struct cli_ctx *ctx);
+int handle(struct cli_ctx *ctx);
+int execve_shell_script(const char *pathname, char *const argv[]);
+
+#endif /* INCLUDE_KERNFORGEX_H */

@@ -13,92 +13,119 @@
 
 #define pr_prfx "parser: "
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
+
 #include "clicntl.h"
 #include <ctype.h>
 #include <getopt.h>
 #include <stdlib.h>
 
-#define printable(ch) (isprint((unsigned char)ch) ? ch : '#')
-#define FLAG_CASE(opt, str_debug, s_opt)                                       \
-    case (s_opt):                                                              \
-        (opt).is_set = 1;                                                      \
-        pr_debug(str_debug " flag is enable");                                 \
-        break
+#define printable(ch) (isprint((unsigned char)(ch)) ? (ch) : '#')
 
-static void parser_usage_error(char *prog_name, char *msg, int opt)
+static int cli_parser_impl(struct cli_ctx *ctx)
 {
-    if (msg != NULL && opt != 0)
-        fprintf(stderr, RED "%s (-%c)\n" RESET, msg, printable(opt));
-    usage(stderr, prog_name);
-    exit(-1);
-}
-
-static int kfgx_cli_parser_impl(struct cli_ctx *ctx)
-{
+    struct option long_options[OPT_COUNT + 1];
+    char optstring[OPT_COUNT * 3 + 2];
+    size_t optstr_idx = 0;
     int opt;
-    struct option options[] = {
-        ctx->cfg.help.opt,
-        ctx->cfg.verbose.opt,
-        ctx->cfg.kern_dbg.opt,
-        ctx->cfg.files.opt,
-        ctx->cfg.makefile.opt,
-        ctx->cfg.vimrc.opt,
-        ctx->cfg.packages.opt,
-        ctx->cfg.aliases.opt,
-        ctx->cfg.remove.opt,
 
-        /* sentinel */
-        (struct option){0}};
+    /* Build optstring and long_options dynamically from ctx->opts */
+    optstring[optstr_idx++] =
+        ':'; /* Leading colon for distinct missing-arg detection */
 
-    pr_debug("parsing command line");
+    for (size_t i = 0; i < ctx->opts_count; i++) {
+        cli_opt_t *o = &ctx->opts[i];
 
-    while ((opt = getopt_long(
-                ctx->argc,
-                ctx->argv,
-                (char[]){HELP_S_OPT,
-                         VERBOSE_S_OPT,
-                         KERN_DBG_S_OPT,
-                         PKG_S_OPT,
-                         VIMRC_S_OPT,
-                         ALIAS_S_OPT,
-                         MAKEFILE_S_OPT,
-                         FILES_S_OPT,
-                         RM_S_OPT,
-                         '\0'},
-                options,
-                NULL)) != -1) {
-        pr_debug("opt=%4d (%c); optind = %d", opt, printable(opt), optind);
+        /* Build long_options entry */
+        long_options[i].name = o->l_opt;
+        long_options[i].has_arg = o->has_arg;
+        long_options[i].flag = NULL;
+        long_options[i].val =
+            o->s_opt ? (int)(unsigned char)o->s_opt : (int)(1000 + i);
 
-        switch (opt) {
-
-            FLAG_CASE(ctx->cfg.help, "help", HELP_S_OPT);
-            FLAG_CASE(ctx->cfg.verbose, "verbose", VERBOSE_S_OPT);
-            FLAG_CASE(ctx->cfg.kern_dbg, "kernel debuging", KERN_DBG_S_OPT);
-            FLAG_CASE(ctx->cfg.packages, "packages", PKG_S_OPT);
-            FLAG_CASE(ctx->cfg.vimrc, "vimrc", VIMRC_S_OPT);
-            FLAG_CASE(ctx->cfg.aliases, "aliases", ALIAS_S_OPT);
-            FLAG_CASE(ctx->cfg.makefile, "makefile", MAKEFILE_S_OPT);
-            FLAG_CASE(ctx->cfg.files, "files", FILES_S_OPT);
-            FLAG_CASE(ctx->cfg.remove, "removing", RM_S_OPT);
-
-        /* */
-        case '?':
-            parser_usage_error(ctx->argv[0], "Unrecognized argument", optopt);
-            break;
-
-        case ':':
-            parser_usage_error(ctx->argv[0], "Missing argument", optopt);
-            break;
-
-        default:
-            pr_fatal("Unexpected case in switch");
-            exit(-1);
-            break;
+        /* Build short optstring */
+        if (o->s_opt != 0) {
+            optstring[optstr_idx++] = o->s_opt;
+            if (o->has_arg == required_argument) {
+                optstring[optstr_idx++] = ':';
+            } else if (o->has_arg == optional_argument) {
+                optstring[optstr_idx++] = ':';
+                optstring[optstr_idx++] = ':';
+            }
         }
+        long_options[i].val =
+            o->s_opt ? (int)(unsigned char)o->s_opt : (int)(1000 + i);
     }
 
-    pr_debug("parsing end");
+    /* Long options sentinel */
+    long_options[ctx->opts_count] = (struct option){0};
+    optstring[optstr_idx] = '\0';
+
+    pr_debug(
+        "generated optstring='%s' for %zu options", optstring, ctx->opts_count);
+
+    /* Reset getopt internal state */
+    optind = 1;
+    opterr = 0; /* Handle errors explicitly */
+
+    int long_idx = -1;
+    while ((opt = getopt_long(
+                ctx->argc, ctx->argv, optstring, long_options, &long_idx)) !=
+           -1) {
+        pr_debug(
+            "parsed opt=%d ('%c'), optind=%d", opt, printable(opt), optind);
+
+        if (opt == '?') {
+            print_red(
+                stderr,
+                "Error: Unrecognized option: '%c'\n",
+                printable(optopt));
+            usage(stderr, ctx->argv[0], ctx);
+            return -1;
+        }
+
+        if (opt == ':') {
+            fprintf(
+                stderr,
+                RED "Error: (Option requires an argument: '-%c'\n" RESET,
+                printable(optopt));
+            usage(stderr, ctx->argv[0], ctx);
+            return -1;
+        }
+
+        /* Find matching option in ctx->opts */
+        cli_opt_t *matched = NULL;
+        if (long_idx >= 0 && (size_t)long_idx < ctx->opts_count) {
+            matched = &ctx->opts[long_idx];
+        } else {
+            for (size_t i = 0; i < ctx->opts_count; i++) {
+                if (ctx->opts[i].s_opt &&
+                    (int)(unsigned char)ctx->opts[i].s_opt == opt) {
+                    matched = &ctx->opts[i];
+                    break;
+                }
+            }
+        }
+
+        if (matched) {
+            matched->is_set = true;
+            matched->arg_val = optarg;
+            pr_debug(
+                "matched option '--%s' (-%c), val='%s'",
+                matched->l_opt ? matched->l_opt : "",
+                matched->s_opt ? matched->s_opt : ' ',
+                matched->arg_val ? matched->arg_val : "none");
+        } else {
+            pr_error("unhandled option code: %d", opt);
+            return -1;
+        }
+
+        long_idx = -1;
+    }
+
+    pr_debug("parsing complete successfully");
     return 0;
 }
 
@@ -109,5 +136,5 @@ int cli_parser(struct cli_ctx *ctx)
         return -1;
     }
 
-    return kfgx_cli_parser_impl(ctx);
+    return cli_parser_impl(ctx);
 }

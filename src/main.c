@@ -6,23 +6,22 @@
 
 int main(int argc, char **argv)
 {
-    /*init command line context */
-    struct cli_ctx ctx = {
-        .argc = argc,
-        .argv = argv,
-    };
+    struct cli_ctx ctx;
 
-    /*init command line configuration options */
-    if (init_cli_config(&ctx.cfg))
-        return -1;
-
-    /* parsing */
-    if (cli_parser(&ctx)) {
-        pr_error("failed to parsing command line");
+    /* Initialize command line context and default options */
+    if (cli_ctx_init(&ctx, argc, argv)) {
+        pr_error("failed to initialize cli context");
         return -1;
     }
 
-    if (handle(&ctx.cfg)) {
+    /* Parsing */
+    if (cli_parser(&ctx)) {
+        pr_error("failed to parse command line");
+        return -1;
+    }
+
+    /* Handling options and actions */
+    if (handle(&ctx)) {
         pr_error("failed to handle command line arguments");
         return -1;
     }

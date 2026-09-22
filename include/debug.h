@@ -20,6 +20,7 @@
 #define prfx_fmt ""
 #endif
 
+/* default format color */
 #ifndef COLOR_PRFX_FMT
 #define COLOR_PRFX_FMT YELLOW
 #endif
@@ -27,6 +28,25 @@
 #ifndef COLOR_META_FMT
 #define COLOR_META_FMT GREEN
 #endif
+
+/* Generic macro wrapper to inject ANSI codes around formatted text */
+#define PRINT_COLOR(stream, color, fmt, ...)                                   \
+    fprintf((stream), color fmt RESET, ##__VA_ARGS__)
+
+#define print(stream, fmt, ...) fprintf((stream), fmt, ##__VA_ARGS__)
+
+/* Color specific helper macros matching standard fprintf behavior */
+#define print_red(stream, fmt, ...) PRINT_COLOR(stream, RED, fmt, ##__VA_ARGS__)
+#define print_green(stream, fmt, ...)                                          \
+    PRINT_COLOR(stream, GREEN, fmt, ##__VA_ARGS__)
+#define print_yellow(stream, fmt, ...)                                         \
+    PRINT_COLOR(stream, YELLOW, fmt, ##__VA_ARGS__)
+#define print_blue(stream, fmt, ...)                                           \
+    PRINT_COLOR(stream, BLUE, fmt, ##__VA_ARGS__)
+#define print_magenta(stream, fmt, ...)                                        \
+    PRINT_COLOR(stream, MAGENTA, fmt, ##__VA_ARGS__)
+#define print_cyan(stream, fmt, ...)                                           \
+    PRINT_COLOR(stream, CYAN, fmt, ##__VA_ARGS__)
 
 /**
  * @brief Log levels used by the logging system.

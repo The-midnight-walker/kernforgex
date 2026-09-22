@@ -25,153 +25,296 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-extern char **envrion;
+extern char **environ;
+static int debug_kernel_handle(struct cli_ctx *, struct cli_opt *);
 
-#define IS_OPT_SET(opt, s_opt) ((opt.is_set)) ? (s_opt) : ' '
-#define eval_str(str, def) (str) ? str : def
+/* Default declarative options table */
+static const cli_opt_t default_cli_options[OPT_COUNT] = {
+    [OPT_HELP] =
+        {
+            .id = OPT_HELP,
+            .s_opt = 'h',
+            .l_opt = "help",
+            .has_arg = no_argument,
+            .arg_name = NULL,
+            .desc = "Display this help message and exit",
+            .action = NULL,
+        },
+    [OPT_VERBOSE] =
+        {
+            .id = OPT_VERBOSE,
+            .s_opt = 'v',
+            .l_opt = "verbose",
+            .has_arg = no_argument,
+            .arg_name = NULL,
+            .desc = "Enable verbose output mode",
+            .action = NULL,
+        },
+    [OPT_KERN_DBG] =
+        {
+            .id = OPT_KERN_DBG,
+            .s_opt = 'd',
+            .l_opt = "kernel-debug",
+            .has_arg = no_argument,
+            .arg_name = NULL,
+            .desc = "Configure Linux kernel debugging environment",
+            .action = debug_kernel_handle,
+        },
+    [OPT_PACKAGES] =
+        {
+            .id = OPT_PACKAGES,
+            .s_opt = 'p',
+            .l_opt = "packages",
+            .has_arg = no_argument,
+            .arg_name = NULL,
+            .desc = "Install required packages (or remove with -r)",
+            .action = NULL,
+        },
+    [OPT_REMOVE] =
+        {
+            .id = OPT_REMOVE,
+            .s_opt = 'r',
+            .l_opt = "remove",
+            .has_arg = no_argument,
+            .arg_name = NULL,
+            .desc = "With -p, remove packages instead of installing",
+            .action = NULL,
+        },
+    [OPT_ALIASES] =
+        {
+            .id = OPT_ALIASES,
+            .s_opt = 'a',
+            .l_opt = "aliases",
+            .has_arg = no_argument,
+            .arg_name = NULL,
+            .desc = "Configure shell aliases",
+            .action = NULL,
+        },
+    [OPT_FILES] =
+        {
+            .id = OPT_FILES,
+            .s_opt = 'f',
+            .l_opt = "files",
+            .has_arg = no_argument,
+            .arg_name = NULL,
+            .desc = "Tune files",
+            .action = NULL,
+        },
+    [OPT_VIMRC] =
+        {
+            .id = OPT_VIMRC,
+            .s_opt = 'c',
+            .l_opt = "vimrc",
+            .has_arg = no_argument,
+            .arg_name = NULL,
+            .desc = "Deploy a specific util vim configuration",
+            .action = NULL,
+        },
+    [OPT_MAKEFILE] =
+        {
+            .id = OPT_MAKEFILE,
+            .s_opt = 'm',
+            .l_opt = "makefile",
+            .has_arg = no_argument,
+            .arg_name = NULL,
+            .desc = "Deploy module Makefile template",
+            .action = NULL,
+        },
+};
 
-void usage_impl(FILE *stream, const char *prog_name)
+int cli_ctx_init(struct cli_ctx *ctx, int argc, char *const *argv)
 {
-    fprintf(
-        stream,
-        "Usage: %s [OPTIONS]\n\n"
-        "Options:\n"
-        "  -v, --verbose    Enable verbose mode\n"
-        "  -h, --help       Display this help\n",
-        prog_name);
+    if (!ctx) {
+        pr_error("ctx is NULL");
+        return -1;
+    }
+
+    ctx->argc = argc;
+    ctx->argv = argv;
+    ctx->opts_count = OPT_COUNT;
+    memcpy(ctx->opts, default_cli_options, sizeof(default_cli_options));
+
+    return 0;
 }
 
-int usage(FILE *stream, const char *prog_name)
+static void
+usage_impl(FILE *stream, const char *prog_name, const struct cli_ctx *ctx)
+{
+    const cli_opt_t *opts;
+    size_t count;
+
+    print_yellow(stream, "Usage: %s [OPTIONS]\n\n", prog_name);
+    print_yellow(
+        stream, "Linux kernel and drivers development orchestration CLI.\n\n");
+    fprintf(stream, "Options:\n");
+
+    opts = ctx ? ctx->opts : default_cli_options;
+    count = ctx ? ctx->opts_count : OPT_COUNT;
+
+    for (size_t i = 0; i < count; i++) {
+        const cli_opt_t *o = &opts[i];
+        char opt_buf[64];
+
+        if (o->s_opt && o->l_opt) {
+            if (o->has_arg == required_argument)
+                snprintf(
+                    opt_buf,
+                    sizeof(opt_buf),
+                    "  -%c, --%s %s",
+                    o->s_opt,
+                    o->l_opt,
+                    o->arg_name ? o->arg_name : "<val>");
+            else
+                snprintf(
+                    opt_buf,
+                    sizeof(opt_buf),
+                    "  -%c, --%s",
+                    o->s_opt,
+                    o->l_opt);
+        } else if (o->l_opt) {
+            if (o->has_arg == required_argument)
+                snprintf(
+                    opt_buf,
+                    sizeof(opt_buf),
+                    "      --%s %s",
+                    o->l_opt,
+                    o->arg_name ? o->arg_name : "<val>");
+            else
+                snprintf(opt_buf, sizeof(opt_buf), "      --%s", o->l_opt);
+        } else if (o->s_opt) {
+            if (o->has_arg == required_argument)
+                snprintf(
+                    opt_buf,
+                    sizeof(opt_buf),
+                    "  -%c %s",
+                    o->s_opt,
+                    o->arg_name ? o->arg_name : "<val>");
+            else
+                snprintf(opt_buf, sizeof(opt_buf), "  -%c", o->s_opt);
+        } else {
+            continue;
+        }
+
+        fprintf(stream, "%-32s %s\n", opt_buf, o->desc ? o->desc : "");
+    }
+    fprintf(stream, "\n");
+}
+
+int usage(FILE *stream, const char *prog_name, const struct cli_ctx *ctx)
 {
     const char *name;
 
-    if (!stream) {
-        pr_error("stream=%p", (void *)stream);
-        return -1;
-    }
+    if (!stream)
+        stream = stderr;
 
-    if (!prog_name) {
-        pr_error("prog_name='%p'", (void *)prog_name);
-        return -1;
-    }
+    // TODO: passed variable PROJECT_NAME via CMkakeLists.txt
+    if (!prog_name)
+        prog_name = "kfgx";
 
-    /* get basename from the program name */
     name = strrchr(prog_name, '/');
     if (name != NULL)
         name++;
     else
         name = prog_name;
 
-    if (stdout == stream || stderr == stream) {
-        usage_impl(stream, (name) ? name : prog_name);
-        return 0;
-    }
-
-    pr_error("invalid stream");
-    return -1;
-}
-
-int init_cli_config(struct cli_config_struct *cfg)
-{
-    pr_debug("init command line structure configuration");
-    if (!cfg) {
-        pr_error("cli_cfg=%p", (void *)cfg);
-        return -1;
-    }
-
-    INIT_FLAG(&cfg->help, HELP_L_OPT, no_argument, HELP_S_OPT);
-    INIT_FLAG(&cfg->verbose, VERBOSE_L_OPT, no_argument, VERBOSE_S_OPT);
-    INIT_FLAG(&cfg->kern_dbg, KERN_DBG_L_OPT, no_argument, KERN_DBG_S_OPT);
-    INIT_FLAG(&cfg->remove, RM_L_OPT, no_argument, RM_S_OPT);
-    INIT_FLAG(&cfg->packages, PKG_L_OPT, no_argument, PKG_S_OPT);
-    INIT_FLAG(&cfg->vimrc, VIMRC_L_OPT, no_argument, VIMRC_S_OPT);
-    INIT_FLAG(&cfg->makefile, MAKEFILE_L_OPT, no_argument, MAKEFILE_S_OPT);
-    INIT_FLAG(&cfg->files, FILES_L_OPT, no_argument, FILES_S_OPT);
-
+    usage_impl(stream, name, ctx);
     return 0;
 }
 
-int clean_cli_cfg(struct cli_config_struct *cfg)
+static int
+default_handle(struct cli_ctx *ctx, [[maybe_unused]] struct cli_opt *opt)
 {
-    pr_debug("clean command line struct configuration");
-    if (!cfg) {
-        pr_error("cli_cfg=%p", (void *)cfg);
-        return -1;
+    /* If verbose mode is enabled, adjust log level */
+    if (cli_has_flag(ctx, OPT_VERBOSE)) {
+        enable_debug_loglevel(DBG_LOGLEVEL_DEBUG);
+        pr_debug("verbose mode enabled");
     }
 
-    return 0;
+    /* If --help or no option is requested for the main program, display usage
+     */
+    return usage(stdout, ctx->argv[0], ctx);
 }
 
-int handle(struct cli_config_struct *cfg)
+static int
+debug_kernel_handle(struct cli_ctx *ctx, [[maybe_unused]] struct cli_opt *opt)
 {
-    int ret = -1;
-
-    pr_debug("handling command line");
-    if (!cfg) {
-        pr_error("cli_cfg=%p", (void *)cfg);
-        return ret;
-    }
-
-    /* usage for help */
-    if (cfg->help.is_set) {
-        ret = usage(stdout, "");
-        return 0;
-    }
-
-    /* debug kernel */
-    if (cfg->kern_dbg.is_set)
-        ret = debug_kernel_handle(
-            (char *const[]){
-                GET_FLAG_NAME(cfg->remove),
-                GET_FLAG_NAME(cfg->verbose),
-                GET_FLAG_NAME(cfg->packages),
-                GET_FLAG_NAME(cfg->files),
-                GET_FLAG_NAME(cfg->aliases),
-            },
-            0);
-
-    if (cfg->vimrc.is_set)
-        ret = 1;
-
-    return ret;
-}
-
-int handle(struct cli_ctx *ctx)
-{
-    pr_debug("handling command line");
-    if (check_cli_ctx(ctx)) {
-        pr_error("invalid command line context arguments passed");
-        return -1;
-    }
-
-    return handle_impl(ctx);
-}
-
-int debug_kernel_handle(char *const argv[], [[maybe_unused]] void *data)
-{
-    if (data) {
-        pr_debug("passed a cookie");
-    } else {
-        pr_debug("no cookie passed, data=%p", (void *)data);
-    }
-
-    if (!argv)
-        pr_debug("args=%p", argv);
+    /* Construct arguments array forwarding only active flags */
+    char *kdbg_argv[7];
+    int idx = 0;
 
     if (check_script_pathname(KERN_DBG_SH_PATH))
         return -1;
 
     pr_info(
-        "debug kernel handler shell script pathanme is '%s'", KERN_DBG_SH_PATH);
-    return execve_shell_script(KERN_DBG_SH_PATH, argv);
+        "debug kernel handler shell script pathname is '%s'", KERN_DBG_SH_PATH);
+
+    kdbg_argv[idx++] = (char *)KERN_DBG_SH_PATH;
+
+    if (cli_has_flag(ctx, OPT_HELP))
+        kdbg_argv[idx++] = "-h";
+
+    if (cli_has_flag(ctx, OPT_VERBOSE))
+        kdbg_argv[idx++] = "-v";
+
+    if (cli_has_flag(ctx, OPT_PACKAGES))
+        kdbg_argv[idx++] = "-p";
+
+    if (cli_has_flag(ctx, OPT_REMOVE))
+        kdbg_argv[idx++] = "-r";
+
+    if (cli_has_flag(ctx, OPT_FILES))
+        kdbg_argv[idx++] = "-s";
+
+    kdbg_argv[idx] = NULL;
+
+    return execve_shell_script(KERN_DBG_SH_PATH, kdbg_argv);
+}
+
+int handle(struct cli_ctx *ctx)
+{
+    bool any_exec = 0;
+    int ret = 0;
+
+    if (check_cli_ctx(ctx)) {
+        pr_error("invalid command line context arguments passed");
+        return -1;
+    }
+
+    pr_debug("handling command line");
+
+    /* Execute registered actions */
+    for (size_t i = 0; i < ctx->opts_count; i++) {
+        cli_opt_t *opt = &ctx->opts[i];
+        if (opt->is_set && opt->action) {
+            any_exec = 1;
+            pr_info(
+                "running action for option '--%s'",
+                opt->l_opt ? opt->l_opt : "");
+            int res = opt->action(ctx, opt);
+            if (res != 0)
+                ret = res;
+        }
+    }
+
+    if (any_exec)
+        return ret;
+
+    return default_handle(ctx, NULL);
+
+    /* Handle configuration files deployment
+    if (cli_has_flag(ctx, OPT_VIMRC)) {
+        pr_info("deploying kernel-specific vimrc configuration...");
+    }
+
+    if (cli_has_flag(ctx, OPT_MAKEFILE)) {
+        pr_info("deploying kernel module Makefile template...");
+    }*/
 }
 
 static int execve_shell_script_impl(const char *pathname, char *const argv[])
 {
     pid_t sh_pid;
     int status, cur_pid, ret;
-    (void)pathname;
-    (void)argv;
 
 #define pr_debug_env()                                                         \
     do {                                                                       \
