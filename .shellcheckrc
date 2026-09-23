@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: GPL-2.0
+#
+# vim: set ts=8 sw=8 noet tw=80 cc=80 fo+=t :
+
+# Project-wide ShellCheck configuration for a pure POSIX sh codebase.
+# Placed at the repo root, ShellCheck picks this up automatically for
+# every file it lints — no need to repeat flags on the command line or
+# add per-file directives.
+# https://www.mankier.com/1/shellcheck#RC_Files
+
+# Force POSIX sh semantics regardless of each file's shebang or extension.
+# Without this, ShellCheck infers the dialect per file; pinning it here
+# guarantees bashisms are flagged everywhere, even in a file someone
+# shebangs "#!/bin/bash" by mistake.
+shell=sh
+
+# --- Optional checks (opt-in, off by default in ShellCheck) ---
+# https://www.shellcheck.net/wiki/Optional
+
+# Warn when a referenced variable is never assigned in scope.
+enable=check-unassigned-uppercase
+
+# Suggest quoting to prevent globbing/word-splitting even where ShellCheck
+# can't prove it's unsafe.
+enable=quote-safe-variables
+
+# Require ${VAR} braces consistently once a variable is used with braces
+# anywhere, for readability.
+enable=require-variable-braces
+
+# Flag deprecation-style dollar-signs on the wrong side of [ ] comparisons.
+enable=avoid-nullary-conditions
+
+# --- Severity ---
+# Keep style-level notes visible; nothing here is silenced by default.
+# Override per-line with `# shellcheck disable=SCxxxx` only when the
+# reason is documented in a comment right above it (as already done for
+# SC1090/SC2034 in this codebase).
+severity=style
+
+# --- Source resolution ---
+# Let ShellCheck follow `.` / `source` into sibling files instead of
+# giving up on SC1091 (info could not be followed).
+source-path=SCRIPTDIR

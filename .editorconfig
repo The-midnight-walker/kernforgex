@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: GPL-2.0
+#
+# vim: set ts=8 sw=8 noet tw=80 cc=80 fo+=t :
+
+# EditorConfig — https://editorconfig.org
+# Mirrors the vim modelines already present in this project's .sh files
+# (ts=8 sw=8 noet tw=80 cc=80), so contributors get the same layout
+# whether their editor reads modelines or EditorConfig.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# Shell scripts: tabs, width 8, matching the vim modelines
+# (noet = no expand tab -> tabs; ts=8 sw=8 -> tab/shift width 8).
+# Chosen deliberately over spaces: this project ships kernel-debugging
+# tooling (checkpatch.pl, decode_stacktrace.sh) and follows the same
+# convention as the kernel coding style it targets.
+[*.sh]
+indent_style = tab
+indent_size = 8
+tab_width = 8
+max_line_length = 80
+
+# Shell config files parsed by the project's own POSIX parser: keep them
+# plain and predictable, one value per line.
+[*.conf]
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+
+# ShellCheck/EditorConfig's own rc files.
+[.shellcheckrc]
+indent_style = space
+indent_size = 2
+
+[Makefile]
+indent_style = tab
+
+[*.md]
+trim_trailing_whitespace = false
+max_line_length = off
