@@ -67,7 +67,7 @@ static const cli_opt_t default_cli_options[OPT_COUNT] = {
             .l_opt = "packages",
             .has_arg = no_argument,
             .arg_name = NULL,
-            .desc = "Install required packages (or remove with -r)",
+            .desc = "Install required packages (list with -l or remove with -r)",
             .action = NULL,
         },
     [OPT_REMOVE] =
@@ -80,6 +80,16 @@ static const cli_opt_t default_cli_options[OPT_COUNT] = {
             .desc = "With -p, remove packages instead of installing",
             .action = NULL,
         },
+    [OPT_INSTALL] =
+        {
+            .id = OPT_INSTALL,
+            .s_opt = 'i',
+            .l_opt = "install",
+            .has_arg = no_argument,
+            .arg_name = NULL,
+            .desc = "With -i, installing packages",
+            .action = NULL,
+        },
     [OPT_ALIASES] =
         {
             .id = OPT_ALIASES,
@@ -88,6 +98,16 @@ static const cli_opt_t default_cli_options[OPT_COUNT] = {
             .has_arg = no_argument,
             .arg_name = NULL,
             .desc = "Configure shell aliases",
+            .action = NULL,
+        },
+    [OPT_LIST] =
+        {
+            .id = OPT_LIST,
+            .s_opt = 'l',
+            .l_opt = "list",
+            .has_arg = no_argument,
+            .arg_name = NULL,
+            .desc = "list pakcages, files , ... (on verbose)",
             .action = NULL,
         },
     [OPT_FILES] =
@@ -239,7 +259,7 @@ static int
 debug_kernel_handle(struct cli_ctx *ctx, [[maybe_unused]] struct cli_opt *opt)
 {
     /* Construct arguments array forwarding only active flags */
-    char *kdbg_argv[7];
+    char *kdbg_argv[9];
     int idx = 0;
 
     if (check_script_pathname(KERN_DBG_SH_PATH))
@@ -255,6 +275,12 @@ debug_kernel_handle(struct cli_ctx *ctx, [[maybe_unused]] struct cli_opt *opt)
 
     if (cli_has_flag(ctx, OPT_VERBOSE))
         kdbg_argv[idx++] = "-v";
+
+    if (cli_has_flag(ctx, OPT_INSTALL))
+        kdbg_argv[idx++] = "-i";
+
+    if (cli_has_flag(ctx, OPT_LIST))
+        kdbg_argv[idx++] = "-l";
 
     if (cli_has_flag(ctx, OPT_PACKAGES))
         kdbg_argv[idx++] = "-p";

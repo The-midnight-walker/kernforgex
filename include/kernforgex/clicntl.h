@@ -31,6 +31,8 @@ typedef enum {
     OPT_KERN_DBG,
     OPT_PACKAGES,
     OPT_REMOVE,
+    OPT_INSTALL,
+    OPT_LIST,
     OPT_ALIASES,
     OPT_FILES,
     OPT_VIMRC,
