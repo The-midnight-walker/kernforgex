@@ -8,7 +8,7 @@ project(kfgx LANGUAGES C)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_C_EXTENSIONS ON)
 
 file(GLOB_RECURSE FORMAT_FILES
     CONFIGURE_DEPENDS
@@ -35,8 +35,9 @@ add_custom_target(format
 find_program(CLANG_FORMAT_BIN clang-format)
 if(CLANG_FORMAT_BIN)
     add_custom_target(format-c
-        COMMAND ${CLANG_FORMAT_BIN} -i -style=file ${C_FILES}
+        COMMAND ${CLANG_FORMAT_BIN} -i -style=file ${FORMAT_FILES}
         COMMENT "[clang-format] Formatting C source files..."
+        COMMAND_EXPAND_LISTS
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
     add_dependencies(format format-c)

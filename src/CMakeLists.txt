@@ -30,6 +30,7 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     -Wshadow
     -Werror
     -Wconversion
+    -Wpedantic
     -Wformat=2
     -Wincompatible-pointer-types
 #   -fsanitize=address,undefined
