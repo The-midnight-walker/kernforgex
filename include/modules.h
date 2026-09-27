@@ -5,6 +5,7 @@
 #ifndef INCLUDE_MODULE_H
 #define INCLUDE_MODULE_H
 
+#include <getopt.h>
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -12,12 +13,30 @@
 #include "lists.h"
 
 /**
+ * @def CLI_IGNORE_MODULE_ERRORS
  * @brief Command chaining support:
  * If the requested module is not found within the current submodule scope,
  * fallback to 'root_sub_modules' to allow execution of top-level commands
  * in a single invocation (e.g., kfgx net -i eth0 disk status).
  */
 #define CLI_ENABLE_MODULES_CHAINING
+
+/**
+ * @def CLI_IGNORE_MODULE_ERRORS
+ * @brief Controls error tolerance during chained module execution.
+ *
+ * When defined, the CLI engine continues executing remaining modules in the
+ * sequence
+ * (`dispatch_cli`) even if a previous module's `action` callback returns an
+ * error code (non-zero value).
+ *
+ * @note By default (macro undefined), any error returned by `action`
+ * immediately halts execution and stops remaining modules from running.
+ *
+ * @warning Errors are still logged via \c pr_error / \c pr_warn, but the final
+ * return code may conceal intermediate step failures.
+ */
+#define CLI_IGNORE_MODULE_ERRORS
 
 /**
  * @struct module_option_struct
@@ -54,6 +73,40 @@ typedef struct module_struct {
     const char *usage; /**< Usage syntax template (e.g. "[options] <target>",
                         module name is prefixed automatically)
                         */
+    /**
+     * @brief Module execution handler invoked after option parsing.
+     *
+     * @param[in] optc Number of active/matched options.
+     * @param[in] optv Array of pointers to active options.
+     *
+     * @return 0 on success, non-zero on failure.
+     *
+     * @warning **HEAP ALLOCATION & MEMORY OWNERSHIP**
+     * @par
+     * The \p optv array is dynamically allocated on the **HEAP** by the
+     * KernForgeX engine.
+     *
+     * **Strict Developer Rules:**
+     * 1. **DO NOT CALL \c free() ON \p optv OR ITS ELEMENTS:** Memory lifecycle
+     *    is entirely managed by the framework. Calling \c free() inside this
+     * callback will result in *Double-Free* or *Use-After-Free* heap
+     * corruption.
+     * 2. **DO NOT MUTATE POINTERS OR STRINGS IN-PLACE:** Do not alter internal
+     * option fields.
+     * 3. **ALWAYS MAKE A DEEP COPY FOR PERSISTENCE:** If option values are
+     * required beyond the callback scope, you **MUST** create a deep copy into
+     * your module's private context.
+     *
+     * @note Mandatory as of this revision: add_module(), add_submodule() and
+     * set_root_module() all now take `action` as a required registration
+     * parameter and reject (return NULL for) any attempt to register a
+     * module without one. This is enforced because cli_parsing() calls
+     * m->action() unconditionally for any matched module that captured at
+     * least one argument - an unset handler previously meant a NULL
+     * function-pointer call discovered only at CLI-dispatch time, instead
+     * of a clear failure at registration time.
+     */
+    int (*action)(int optc, module_option_t **optv);
 } module_t;
 
 /**
@@ -108,6 +161,8 @@ typedef struct module_entry_struct {
  * @param[in] usage   Usage syntax string, or NULL if none.
  * @param[in] options Array of option structure pointers, or NULL if none.
  * @param[in] opt_nr  Total number of options in the array.
+ * @param[in] action  Handler invoked after option parsing for this module.
+ * Mandatory: must not be NULL, or registration fails (see module_t::action).
  *
  * @return Pointer to the embedded public module_t structure, or NULL on
  * failure.
@@ -116,7 +171,8 @@ module_t *add_module(
     const char *name,
     const char *usage,
     module_option_t **options,
-    unsigned int opt_nr);
+    unsigned int opt_nr,
+    int (*action)(int optc, module_option_t **optv));
 
 /**
  * @brief Allocates or updates the standalone global root module for top-level
@@ -127,6 +183,9 @@ module_t *add_module(
  * NULL.
  * @param[in] options Array of option structure pointers, or NULL if none.
  * @param[in] opt_nr  Total number of options in the array.
+ * @param[in] action  Handler invoked after option parsing for the root
+ * module. Mandatory: must not be NULL, or the call fails (see
+ * module_t::action).
  *
  * @return Pointer to the embedded public module_t structure, or NULL on
  * failure.
@@ -135,7 +194,8 @@ module_t *set_root_module(
     const char *name,
     const char *usage,
     module_option_t **options,
-    unsigned int opt_nr);
+    unsigned int opt_nr,
+    int (*action)(int optc, module_option_t **optv));
 
 /**
  * @brief Registers a sub-module under a specific parent module.
@@ -150,6 +210,9 @@ module_t *set_root_module(
  * @param[in] usage      Usage syntax string, or NULL if none.
  * @param[in] options    Array of option structure pointers, or NULL if none.
  * @param[in] opt_nr     Total number of options in the array.
+ * @param[in] action     Handler invoked after option parsing for this
+ * sub-module. Mandatory: must not be NULL, or registration fails (see
+ * module_t::action).
  *
  * @return Pointer to the embedded public module_t structure of the child, or
  * NULL on failure.
@@ -159,7 +222,8 @@ module_t *add_submodule(
     const char *name,
     const char *usage,
     module_option_t **options,
-    unsigned int opt_nr);
+    unsigned int opt_nr,
+    int (*action)(int optc, module_option_t **optv));
 
 /**
  * @brief Parses command-line arguments, activates matching modules, and
@@ -169,12 +233,28 @@ module_t *add_submodule(
  *
  * @return 0 on success, -1 on error
  */
-int launch_cli(char **argv);
+int launch_cli(char *const *argv);
 
-module_t *set_root_module(
-    const char *name,
-    const char *usage,
-    module_option_t **options,
-    unsigned int opt_nr);
+/**
+ * @brief Renders CLI usage instructions for a module.
+ *
+ * @param[in] stream Output file stream (defaults to stderr if NULL).
+ * @param[in] prog_name Executable name or path
+ * @param[in] m Pointer to the target module structure containing options and
+ * metadata.
+ *
+ * @return 0 on success, -1 if the module pointer is invalid.
+ */
+int pr_module_usage(FILE *stream, const char *prog_name, const module_t *m);
+
+/**
+ * @brief Prints the summary usage for a module.
+ *
+ * @param[in] stream Output file stream (defaults to stderr if NULL).
+ * @param[in] progr_name Executable name or path .
+ * @param[in] m Pointer to the target module structure.
+ */
+void pr_module_short_usage(
+    FILE *stream, const char *progr_name, const module_t *m);
 
 #endif /* INCLUDE_MODULE_H */

@@ -6,7 +6,7 @@
  * @file      modules.c
  * @author    midnight walker
  * @brief     Execute options and arguments with handlers.
- * @version   0.2
+ * @version   0.3
  * @date      2026-09-25
  * @copyright GNU General Public License v2.0
  *
@@ -14,6 +14,9 @@
 
 #define prfx_fmt "modules: "
 
+#include <ctype.h>
+#include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -42,6 +45,8 @@ static list_node_t root_sub_modules = {&root_sub_modules, &root_sub_modules};
  */
 static list_node_t matched_mods = {&matched_mods, &matched_mods};
 
+static char *prog_name;
+
 static void free_module_tree(list_node_t *head);
 
 /**
@@ -55,6 +60,7 @@ static void free_module_tree(list_node_t *head);
  * if none.
  * @param[in] options Pointer to an array of option pointers, or NULL if none.
  * @param[in] opt_nr  Total number of options in the array.
+ * @param[in] action  Module execution handler.
  * @param[in] level   Depth level of the module within the hierarchy tree.
  *
  * @return Pointer to the allocated module_entry_t structure, or NULL on
@@ -65,6 +71,7 @@ static module_entry_t *create_module_entry(
     const char *usage,
     module_option_t **options,
     unsigned int opt_nr,
+    int (*action)(int optc, module_option_t **optv),
     unsigned int level)
 {
     module_entry_t *entry = calloc(1, sizeof(*entry));
@@ -128,6 +135,7 @@ static module_entry_t *create_module_entry(
     }
 
     entry->level = level;
+    entry->mod.action = action;
     list_init(&entry->sub_modules);
     list_init(&entry->siblings);
     list_init(&entry->matches);
@@ -144,14 +152,16 @@ module_t *set_root_module(
     const char *name,
     const char *usage,
     module_option_t **options,
-    unsigned int opt_nr)
+    unsigned int opt_nr,
+    int (*action)(int optc, module_option_t **optv))
 {
-    if (!name)
+    if (!name || !action)
         return NULL;
 
     /* Allocate root_entry on first call */
     if (!root_entry) {
-        root_entry = create_module_entry(name, usage, options, opt_nr, 0);
+        root_entry =
+            create_module_entry(name, usage, options, opt_nr, action, 0);
         if (!root_entry)
             return NULL;
         return &root_entry->mod;
@@ -252,6 +262,7 @@ module_t *set_root_module(
     free_module_tree(&root_entry->sub_modules);
 
     root_entry->level = 0;
+    root_entry->mod.action = action;
     list_init(&root_entry->sub_modules);
     list_init(&root_entry->siblings);
     list_init(&root_entry->matches);
@@ -301,14 +312,15 @@ module_t *add_module(
     const char *name,
     const char *usage,
     module_option_t **options,
-    unsigned int opt_nr)
+    unsigned int opt_nr,
+    int (*action)(int optc, module_option_t **optv))
 {
-    if (!name)
+    if (!name || !action)
         return NULL;
 
     /* Create the module entry at root level (0) */
     module_entry_t *entry =
-        create_module_entry(name, usage, options, opt_nr, 0);
+        create_module_entry(name, usage, options, opt_nr, action, 0);
     if (!entry)
         return NULL;
 
@@ -328,9 +340,10 @@ module_t *add_submodule(
     const char *name,
     const char *usage,
     module_option_t **options,
-    unsigned int opt_nr)
+    unsigned int opt_nr,
+    int (*action)(int optc, module_option_t **optv))
 {
-    if (!parent_mod || !name)
+    if (!parent_mod || !name || !action)
         return NULL;
 
     /* Retrieve the private entry container from the public module pointer */
@@ -338,7 +351,7 @@ module_t *add_submodule(
 
     /* Create the child entry with its depth level incremented */
     module_entry_t *child = create_module_entry(
-        name, usage, options, opt_nr, parent_entry->level + 1);
+        name, usage, options, opt_nr, action, parent_entry->level + 1);
     if (!child)
         return NULL;
 
@@ -431,11 +444,31 @@ static void free_module_tree(list_node_t *head)
 }
 
 /**
- * @brief Traverses `argv` sequentially until NULL to match positional arguments
+ * @brief Releases every module resource created for this CLI invocation.
+ */
+static void cleanup_cli_modules(void)
+{
+    free_module_tree(&root_sub_modules);
+    free_root_entry();
+}
+
+/**
+ * @brief Parses command-line arguments, activates matching modules, and
+ * captures options.
+ * Traverses `argv` sequentially until NULL to match positional arguments
  * against registered module hierarchies and captures option flags into active
  * module structures.
+ *
+ * @note Does not free anything itself: matched modules and their captured
+ * arguments must remain alive for cli_parsing() to consume afterward.
+ * Callers are responsible for calling cleanup_cli_modules() once, after
+ * cli_parsing() has run (see parse_cli()).
+ *
+ * @param[in] argv Array of command-line argument strings (NULL-terminated).
+ *
+ * @return 0 on success, -1 on error
  */
-int launch_cli(char **argv)
+static int parse_cli_modules(char *const *argv)
 {
     if (!argv || !*argv)
         return 0;
@@ -447,14 +480,19 @@ int launch_cli(char **argv)
      * options capture */
     module_entry_t *current_mod = root_entry;
 
-    for (char **args = argv + 1; *args != NULL; args++) {
+    for (char **args = (char **)argv + 1; *args != NULL; args++) {
         const char *arg = *args;
 
         /* Option processing (arguments starting with '-') */
         if (arg[0] == '-') {
             if (!current_mod) {
                 pr_error(
-                    "Option '%s' is not associated with any active module",
+                    "Option '%s' is not associated with any active module "
+                    "(root_entry=(null))",
+                    arg);
+                print_red(
+                    stderr,
+                    "Internal error while parsing option(s) '%s' failed",
                     arg);
                 goto out;
             }
@@ -473,6 +511,10 @@ int launch_cli(char **argv)
                 current_mod->args, (current_mod->args_nr + 1) * sizeof(char *));
             if (!new_args) {
                 pr_error("Failed to create an argument");
+                print_red(
+                    stderr,
+                    "Internal error while parsing option(s) '%s' failed",
+                    arg);
                 goto out;
             }
             current_mod->args = new_args;
@@ -491,11 +533,13 @@ int launch_cli(char **argv)
 #endif
         if (!found) {
             pr_error("Module or submodule '%s' unknown in this context", arg);
+            pr_module_short_usage(stderr, prog_name, &current_mod->mod);
             goto out;
         }
 
         if (found->matched) {
             pr_error("Module '%s' has already been specified", arg);
+            pr_module_short_usage(stderr, prog_name, &found->mod);
             goto out;
         }
 
@@ -511,9 +555,10 @@ int launch_cli(char **argv)
 #ifdef DEBUG
     /* Print execution details */
     list_node_t *curr_node;
+    module_entry_t *e;
     list_for_each(curr_node, &matched_mods)
     {
-        module_entry_t *e = container_of(curr_node, module_entry_t, matches);
+        e = container_of(curr_node, module_entry_t, matches);
         pr_debug(
             "Module: <%s> [level='%u', '%u' option(s)]",
             e->mod.name,
@@ -528,7 +573,377 @@ int launch_cli(char **argv)
     ret = 0;
 
 out:
-    free_module_tree(&root_sub_modules);
-    free_root_entry();
     return ret;
+}
+
+#define printable(ch) (isprint((unsigned char)(ch)) ? (ch) : '#')
+
+/**
+ * @brief Parses options for a module using getopt_long.
+ */
+static int parse_cli_modules_options(
+    int argc,
+    char *const *argv,
+    const char *optstring,
+    const struct option *long_options,
+    module_t *m)
+{
+    if (!argv || argc <= 0)
+        return 0;
+
+    char **parse_argv = malloc((size_t)(argc + 1) * sizeof(char *));
+    if (!parse_argv) {
+        pr_error("Allocation memory failed");
+        print_red(stderr, "Internal error while parsing comand line option(s)");
+        return -1;
+    }
+
+    parse_argv[0] = (m && m->name) ? (char *)m->name : "module";
+    for (int i = 0; i < argc; i++) {
+        parse_argv[i + 1] = (char *)argv[i];
+    }
+    int parse_argc = argc + 1;
+
+    /* Complete reset of getopt internal state (glibc-specific) */
+    optind = 0;
+    opterr = 0; /* Disable default getopt error reporting to handle errors
+                   explicitly */
+
+    int opt;
+    int long_idx = -1;
+    int ret = 0;
+
+    while ((opt = getopt_long(
+                parse_argc, parse_argv, optstring, long_options, &long_idx)) !=
+           -1) {
+        pr_debug(
+            "parsed opt=%d ('%c'), optind=%d", opt, printable(opt), optind);
+
+        if (opt == '?') {
+            print_red(
+                stderr,
+                "Error: Unrecognized option ('-%c')\n",
+                printable(optopt));
+            if (m && m->usage)
+                pr_module_usage(stderr, prog_name, m);
+            ret = -1;
+            goto out;
+        }
+
+        if (opt == ':') {
+            print_red(
+                stderr,
+                "Error: Option requires an argument: '-%c'\n",
+                printable(optopt));
+            if (m && m->usage)
+                pr_module_usage(stderr, prog_name, m);
+            ret = -1;
+            goto out;
+        }
+
+        /* Match corresponding option in m->options */
+        module_option_t *matched = NULL;
+
+        if (long_idx >= 0 && (size_t)long_idx < m->opt_nr) {
+            matched = m->options[long_idx];
+        } else {
+            for (size_t i = 0; i < m->opt_nr; i++) {
+                if (m->options[i]->s_opt &&
+                    (int)(unsigned char)m->options[i]->s_opt == opt) {
+                    matched = m->options[i];
+                    break;
+                }
+            }
+        }
+
+        if (matched) {
+            matched->is_set = true;
+            matched->arg_val = optarg;
+            pr_debug(
+                "matched option '--%s' (-%c), val='%s'",
+                matched->l_opt ? matched->l_opt : "",
+                matched->s_opt ? matched->s_opt : ' ',
+                matched->arg_val ? matched->arg_val : "none");
+        } else {
+            pr_error("unhandled option code: %d", opt);
+            pr_module_usage(stderr, prog_name, m);
+            ret = -1;
+            goto out;
+        }
+
+        long_idx = -1;
+    }
+
+    pr_debug(
+        "Parsing completed successfully for module: %s",
+        m->name ? m->name : "unknown");
+
+out:
+    free(parse_argv);
+    return ret;
+}
+
+/**
+ * @brief Prepares optstring and long_options structures, then initiates
+ * parsing.
+ */
+static int cli_parsing(void)
+{
+    list_node_t *curr_node;
+
+    list_for_each(curr_node, &matched_mods)
+    {
+        module_entry_t *e = container_of(curr_node, module_entry_t, matches);
+        module_t *m = &e->mod;
+
+        if (!m || m->opt_nr == 0 || e->args_nr == 0)
+            continue;
+
+        char optstring[m->opt_nr * 3 + 2];
+        struct option long_options[m->opt_nr + 1];
+        size_t optstr_idx = 0;
+
+        /* Leading colon to distinguish between an unknown option ('?') and a
+         * missing argument (':') */
+        optstring[optstr_idx++] = ':';
+
+        for (size_t i = 0; i < m->opt_nr; i++) {
+
+            module_option_t *o = m->options[i];
+
+            /* Populate the long_options entry */
+            long_options[i].name = o->l_opt;
+            long_options[i].has_arg = o->has_arg;
+            long_options[i].flag = NULL;
+            long_options[i].val =
+                o->s_opt ? (int)(unsigned char)o->s_opt : (int)(1000 + i);
+
+            /* Populate optstring for short options */
+            if (o->s_opt != 0) {
+                optstring[optstr_idx++] = o->s_opt;
+                if (o->has_arg == required_argument) {
+                    optstring[optstr_idx++] = ':';
+                } else if (o->has_arg == optional_argument) {
+                    optstring[optstr_idx++] = ':';
+                    optstring[optstr_idx++] = ':';
+                }
+            }
+        }
+
+        /* Sentinel for the end of the long_options array */
+        long_options[m->opt_nr] = (struct option){0};
+        optstring[optstr_idx] = '\0';
+
+        pr_debug(
+            "Generated optstring='%s' for %zu options in module '%s'",
+            optstring,
+            (size_t)m->opt_nr,
+            m->name);
+
+        if (parse_cli_modules_options(
+                (int)e->args_nr, e->args, optstring, long_options, m) != 0) {
+            return -1;
+        }
+
+        module_option_t **matched_opts =
+            malloc(m->opt_nr * sizeof(module_option_t *));
+        if (!matched_opts) {
+            pr_error("Failed to allocate matched options array");
+            print_red(
+                stderr, "Internal error while parsing comand line option(s)");
+            return -1;
+        }
+
+        int matched_nr = 0;
+        for (unsigned int i = 0; i < m->opt_nr; i++) {
+            if (m->options[i]->is_set)
+                matched_opts[matched_nr++] = m->options[i];
+        }
+
+        int action_ret = m->action(matched_nr, matched_opts);
+        free(matched_opts);
+
+        if (action_ret) {
+            pr_info("module action failed status on execution");
+
+#ifdef CLI_IGNORE_MODULE_ERRORS
+            continue;
+#endif
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Runs the full CLI pipeline: match modules/arguments, then dispatch
+ * options and action handlers, then release every module resource exactly
+ * once.
+ *
+ * @param[in] argv Array of command-line argument strings (NULL-terminated).
+ *
+ * @return 0 on success, -1 on error.
+ */
+static int parse_cli(char *const *argv)
+{
+    int ret = -1;
+
+    if (!argv && !*argv)
+        return ret;
+    prog_name = argv[0];
+
+    if (parse_cli_modules(argv) != 0)
+        goto out;
+
+    if (cli_parsing() != 0)
+        goto out;
+
+    ret = 0;
+
+out:
+    cleanup_cli_modules();
+
+    if (ret != 0)
+        pr_error("Failed to parse comand line option(s)");
+
+    return ret;
+}
+
+int launch_cli(char *const *argv)
+{
+    return parse_cli(argv);
+}
+
+/**
+ * @brief Renders CLI usage instructions for a module.
+ *
+ * @param[in] stream Output stream (defaults to stderr if NULL).
+ * @param[in] prog_name Executable name or path
+ * @param[in] m Pointer to the module structure containing options and metadata.
+ *
+ * @return 0 on success, -1 if the module pointer is invalid.
+ */
+static void
+module_usage_impl(FILE *stream, const char *progr_name, const module_t *m)
+{
+    print_yellow(stream, "Usage: %s %s \n\n", progr_name, m->usage);
+
+    if (!m->options || m->opt_nr == 0) {
+        return;
+    }
+
+    fprintf(stream, "Options:\n");
+
+    for (size_t i = 0; i < m->opt_nr; i++) {
+        const module_option_t *o = m->options[i];
+        char opt_buf[64];
+
+        if (o->s_opt && o->l_opt) {
+            if (o->has_arg == required_argument) {
+                snprintf(
+                    opt_buf,
+                    sizeof(opt_buf),
+                    "  -%c, --%s %s",
+                    o->s_opt,
+                    o->l_opt,
+                    o->arg_name ? o->arg_name : "<val>");
+            } else {
+                snprintf(
+                    opt_buf,
+                    sizeof(opt_buf),
+                    "  -%c, --%s",
+                    o->s_opt,
+                    o->l_opt);
+            }
+        } else if (o->l_opt) {
+            if (o->has_arg == required_argument) {
+                snprintf(
+                    opt_buf,
+                    sizeof(opt_buf),
+                    "      --%s %s",
+                    o->l_opt,
+                    o->arg_name ? o->arg_name : "<val>");
+            } else {
+                snprintf(opt_buf, sizeof(opt_buf), "      --%s", o->l_opt);
+            }
+        } else if (o->s_opt) {
+            if (o->has_arg == required_argument) {
+                snprintf(
+                    opt_buf,
+                    sizeof(opt_buf),
+                    "  -%c %s",
+                    o->s_opt,
+                    o->arg_name ? o->arg_name : "<val>");
+            } else {
+                snprintf(opt_buf, sizeof(opt_buf), "  -%c", o->s_opt);
+            }
+        } else {
+            continue;
+        }
+
+        fprintf(stream, "%-32s %s\n", opt_buf, o->desc ? o->desc : "");
+    }
+    fprintf(stream, "\n");
+}
+
+int pr_module_usage(FILE *stream, const char *progr_name, const module_t *m)
+{
+    const char *name;
+
+    if (!m)
+        return -1;
+
+    if (!stream)
+        stream = stderr;
+
+    if (!progr_name)
+        prog_name = " ";
+
+    name = strrchr(prog_name, '/');
+    if (name != NULL)
+        name++;
+    else
+        name = prog_name;
+
+    module_usage_impl(stream, name, m);
+    return 0;
+}
+
+void pr_module_short_usage(
+    FILE *stream, const char *progr_name, const module_t *m)
+{
+    const char *name;
+
+    if (!m)
+        return;
+
+    if (!stream)
+        stream = stderr;
+
+    if (!progr_name)
+        progr_name = " ";
+
+    name = strrchr(progr_name, '/');
+    if (name != NULL)
+        name++;
+    else
+        name = progr_name;
+
+    /* Highlight in red for error streams (stderr), yellow otherwise */
+    if (stream == stderr) {
+        print_red(
+            stream,
+            "Usage: %s %s %s\n",
+            name,
+            m->name ? m->name : "module",
+            m->usage ? m->usage : "[OPTIONS]");
+    } else {
+        print_yellow(
+            stream,
+            "Usage: %s %s %s\n",
+            name,
+            m->name ? m->name : "module",
+            m->usage ? m->usage : "[OPTIONS]");
+    }
 }
