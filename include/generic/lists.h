@@ -2,8 +2,8 @@
 //
 // vim: set ts=8 sw=8 noet tw=80 cc=80 fo+=t :
 
-#ifndef INCLUDE_LISTS_H
-#define INCLUDE_LISTS_H
+#ifndef INCLUDE_GENERIC_LISTS_H
+#define INCLUDE_GENERIC_LISTS_H
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -83,4 +83,15 @@ static inline void list_del(list_node_t *node)
 #define list_for_each(pos, head)                                               \
     for (pos = (head)->next; pos != (head); pos = pos->next)
 
-#endif /* INCLUDE_LISTS_H */
+/**
+ * @brief Checks if an intrusive doubly linked list is empty.
+ *
+ * @param head Pointer to the list head node.
+ * @return true if list is empty, false otherwise.
+ */
+static inline bool list_empty(const list_node_t *head)
+{
+    return head->next == head;
+}
+
+#endif /* INCLUDE_GENERIC_LISTS_H */

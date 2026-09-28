@@ -5,16 +5,27 @@
 /**
  * @file      modules.c
  * @author    midnight walker
- * @brief     Execute options and arguments with handlers.
- * @version   0.3
+ * @brief     Hierarchical CLI module registry, argument matching and handler
+ *            dispatch.
+ * @version   0.4
  * @date      2026-09-25
  * @copyright GNU General Public License v2.0
+ *
+ * @details   Modules are registered in a tree (root module, top-level modules,
+ *            nested sub-modules). A command line is processed in three stages:
+ *            1. parse_cli_modules(): walks argv, matches module names against
+ *               the tree and captures raw option tokens on the active module.
+ *            2. cli_parsing(): for every matched module, runs getopt_long()
+ *               over its captured tokens, then invokes its action handler
+ *               with the options that were actually set.
+ *            3. cleanup_cli_modules(): releases the whole registry.
  *
  */
 
 #define prfx_fmt "modules: "
 
 #include <ctype.h>
+#include <getopt.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,48 +34,169 @@
 #include "modules.h"
 
 /**
- * @brief Pointer to the global root module entry.
- *
- * Holds top-level application options passed before any explicit sub-command.
- * Initialized to NULL and allocated via set_root_module().
+ * @struct module_ctx_struct
+ * @brief Global state of the module registry.
  */
-static module_entry_t *root_entry = NULL;
+struct module_ctx_struct {
+    /**
+     * Root module holding the options given before any sub-command.
+     * NULL until set_root_module() succeeds.
+     */
+    module_entry_t *root_entry;
 
-/**
- * @brief Internal head of the root-level sub-modules intrusive list.
- *
- * Self-initialized circular doubly linked list head containing all top-level
- * modules (Level 0).
- */
-static list_node_t root_sub_modules = {&root_sub_modules, &root_sub_modules};
+    /**
+     * Head of the circular list of top-level (level 0) modules registered
+     * with add_module(). Also the scope searched first by the parser.
+     */
+    list_node_t root_sub_modules;
 
-/**
- * @brief Internal head of the matched modules intrusive list.
- *
- * Tracks modules activated sequentially during command-line argument parsing.
- */
-static list_node_t matched_mods = {&matched_mods, &matched_mods};
+    /**
+     * Head of the list of modules activated during argument parsing, in
+     * command-line order. Linked through module_entry_t::matches.
+     */
+    list_node_t matched_mods;
+};
 
-static char *prog_name;
+static struct module_ctx_struct module_ctx = {
+    .root_entry = NULL,
+    .root_sub_modules = {&module_ctx.root_sub_modules,
+                         &module_ctx.root_sub_modules},
+    .matched_mods = {&module_ctx.matched_mods, &module_ctx.matched_mods},
+};
 
 static void free_module_tree(list_node_t *head);
 
 /**
- * @brief Allocates and initializes a new internal module entry.
+ * @brief Releases every heap allocation owned by a public module_t.
  *
- * Performs a deep copy of the module name, usage string, and its associated
- * options array. Initializes all internal list nodes and hierarchy fields.
+ * Frees the name, the usage string and the options array, including each
+ * option's duplicated strings. NULL-safe at every level, so it can also
+ * clean up a partially built module. The structure is zeroed afterwards,
+ * leaving no dangling pointer behind.
  *
- * @param[in] name    Name of the module.
- * @param[in] usage   Usage syntax pattern (e.g. "[options] <target>"), or NULL
- * if none.
- * @param[in] options Pointer to an array of option pointers, or NULL if none.
- * @param[in] opt_nr  Total number of options in the array.
- * @param[in] action  Module execution handler.
- * @param[in] level   Depth level of the module within the hierarchy tree.
+ * @param[in,out] mod Module to release. Its storage itself is not freed.
+ */
+static void free_module_public(module_t *mod)
+{
+    if (mod->options) {
+        for (unsigned int i = 0; i < mod->opt_nr; i++) {
+            module_option_t *opt = mod->options[i];
+
+            if (!opt)
+                continue;
+
+            free((char *)opt->l_opt);
+            free((char *)opt->arg_name);
+            free((char *)opt->desc);
+            free(opt);
+        }
+        free(mod->options);
+    }
+
+    free(mod->name);
+    free((char *)mod->usage);
+
+    memset(mod, 0, sizeof(*mod));
+}
+
+/**
+ * @brief Deep-copies one option definition.
  *
- * @return Pointer to the allocated module_entry_t structure, or NULL on
- * failure.
+ * @param[out] dst Receives the newly allocated option.
+ * @param[in]  src Option definition to copy.
+ *
+ * @return 0 on success, -1 on allocation failure.
+ */
+static int dup_option(module_option_t **dst, const module_option_t *src)
+{
+    module_option_t *opt = malloc(sizeof(*opt));
+    if (!opt)
+        return -1;
+
+    memcpy(opt, src, sizeof(*opt));
+
+    /* Drop the borrowed pointers copied by memcpy(); own copies follow. */
+    opt->l_opt = NULL;
+    opt->arg_name = NULL;
+    opt->desc = NULL;
+    *dst = opt;
+
+    if (src->l_opt && !(opt->l_opt = strdup(src->l_opt)))
+        return -1;
+    if (src->arg_name && !(opt->arg_name = strdup(src->arg_name)))
+        return -1;
+    if (src->desc && !(opt->desc = strdup(src->desc)))
+        return -1;
+
+    return 0;
+}
+
+/**
+ * @brief Builds the public part of a module from caller-supplied data.
+ *
+ * On failure nothing is leaked and @p mod is left zeroed.
+ *
+ * @param[out] mod     Module to initialize (any previous content is ignored).
+ * @param[in]  name    Module name. Must not be NULL.
+ * @param[in]  usage   Usage syntax pattern, or NULL if none.
+ * @param[in]  options Array of option pointers, or NULL if none.
+ * @param[in]  opt_nr  Number of options in @p options.
+ * @param[in]  action  Execution handler. Must not be NULL; callers reject a
+ *                     NULL handler before reaching this point.
+ *
+ * @return 0 on success, -1 on allocation failure.
+ */
+static int init_module_public(
+    module_t *mod,
+    const char *name,
+    const char *usage,
+    module_option_t **options,
+    unsigned int opt_nr,
+    int (*action)(int optc, module_option_t **optv))
+{
+    memset(mod, 0, sizeof(*mod));
+
+    mod->name = strdup(name);
+    if (!mod->name)
+        goto err;
+
+    if (usage) {
+        mod->usage = strdup(usage);
+        if (!mod->usage)
+            goto err;
+    }
+
+    if (options && opt_nr > 0) {
+        mod->options = calloc(opt_nr, sizeof(*mod->options));
+        if (!mod->options)
+            goto err;
+        mod->opt_nr = opt_nr;
+
+        for (unsigned int i = 0; i < opt_nr; i++) {
+            if (dup_option(&mod->options[i], options[i]) != 0)
+                goto err;
+        }
+    }
+
+    mod->action = action;
+    return 0;
+
+err:
+    free_module_public(mod);
+    return -1;
+}
+
+/**
+ * @brief Allocates and initializes a new module entry.
+ *
+ * @param[in] name    Module name. Must not be NULL.
+ * @param[in] usage   Usage syntax pattern, or NULL if none.
+ * @param[in] options Array of option pointers, or NULL if none.
+ * @param[in] opt_nr  Number of options in @p options.
+ * @param[in] action  Execution handler. Must not be NULL.
+ * @param[in] level   Depth of the module in the hierarchy (0 = top level).
+ *
+ * @return The new entry, or NULL on allocation failure.
  */
 static module_entry_t *create_module_entry(
     const char *name,
@@ -78,64 +210,13 @@ static module_entry_t *create_module_entry(
     if (!entry)
         return NULL;
 
-    /* Deep copy of the module name */
-    entry->mod.name = strdup(name);
-    if (!entry->mod.name) {
+    if (init_module_public(&entry->mod, name, usage, options, opt_nr, action)
+        != 0) {
         free(entry);
         return NULL;
     }
 
-    /* Deep copy of the usage syntax string (if provided) */
-    if (usage) {
-        entry->mod.usage = strdup(usage);
-        if (!entry->mod.usage) {
-            free(entry->mod.name);
-            free(entry);
-            return NULL;
-        }
-    }
-
-    /* Deep copy of the options array */
-    if (options && opt_nr > 0) {
-        entry->mod.options = malloc(opt_nr * sizeof(module_option_t *));
-        if (!entry->mod.options) {
-            free((char *)entry->mod.usage);
-            free(entry->mod.name);
-            free(entry);
-            return NULL;
-        }
-
-        for (unsigned int i = 0; i < opt_nr; i++) {
-            entry->mod.options[i] = malloc(sizeof(module_option_t));
-            if (!entry->mod.options[i]) {
-                /* Cleanup previously allocated options on error */
-                for (unsigned int j = 0; j < i; j++) {
-                    free((char *)entry->mod.options[j]->l_opt);
-                    free((char *)entry->mod.options[j]->arg_name);
-                    free((char *)entry->mod.options[j]->desc);
-                    free(entry->mod.options[j]);
-                }
-                free(entry->mod.options);
-                free((char *)entry->mod.usage);
-                free(entry->mod.name);
-                free(entry);
-                return NULL;
-            }
-            memcpy(entry->mod.options[i], options[i], sizeof(module_option_t));
-
-            /* Deep copy of internal string fields */
-            if (options[i]->l_opt)
-                entry->mod.options[i]->l_opt = strdup(options[i]->l_opt);
-            if (options[i]->arg_name)
-                entry->mod.options[i]->arg_name = strdup(options[i]->arg_name);
-            if (options[i]->desc)
-                entry->mod.options[i]->desc = strdup(options[i]->desc);
-        }
-        entry->mod.opt_nr = opt_nr;
-    }
-
     entry->level = level;
-    entry->mod.action = action;
     list_init(&entry->sub_modules);
     list_init(&entry->siblings);
     list_init(&entry->matches);
@@ -144,9 +225,73 @@ static module_entry_t *create_module_entry(
 }
 
 /**
- * @brief Configures the root entry used as a fallback context when CLI options
- * are provided before any sub-command. If already initialized, existing
- * allocations are cleaned up.
+ * @brief Destroys a module entry together with its whole sub-tree.
+ *
+ * @param[in] entry Entry to destroy. Invalid after the call.
+ */
+static void destroy_module_entry(module_entry_t *entry)
+{
+    free_module_tree(&entry->sub_modules);
+
+    list_del(&entry->matches);
+    list_del(&entry->siblings);
+
+    free_module_public(&entry->mod);
+    free(entry->args);
+    free(entry);
+}
+
+/**
+ * @brief Recursively destroys every module linked in a sub-modules list.
+ *
+ * @param[in] head Head of the list to empty. Left as a valid empty list, so
+ * it can safely be reused or emptied again.
+ */
+static void free_module_tree(list_node_t *head)
+{
+    if (!head)
+        return;
+
+    list_node_t *curr = head->next;
+    while (curr != head) {
+        list_node_t *next = curr->next;
+
+        destroy_module_entry(container_of(curr, module_entry_t, siblings));
+        curr = next;
+    }
+}
+
+/**
+ * @brief Destroys the global root module, if any.
+ */
+static void free_root_entry(void)
+{
+    if (!module_ctx.root_entry)
+        return;
+
+    destroy_module_entry(module_ctx.root_entry);
+    module_ctx.root_entry = NULL;
+}
+
+/**
+ * @brief Creates or replaces the global root module.
+ *
+ * On first call the root entry is allocated. On later calls it is
+ * re-initialized in place, so the returned pointer stays the same. Any
+ * sub-modules attached to the previous root and any arguments it captured
+ * are discarded.
+ *
+ * Re-initialization is atomic: the new configuration is built before the old
+ * one is touched, so on failure the previous root module is left unchanged.
+ *
+ * @param[in] name    Application/root name. Must not be NULL.
+ * @param[in] usage   Usage syntax pattern, or NULL.
+ * @param[in] options Array of option pointers, or NULL if none.
+ * @param[in] opt_nr  Number of options in @p options.
+ * @param[in] action  Execution handler for the root module. Mandatory.
+ *
+ * @return The root's public module_t, or NULL on invalid argument or
+ * allocation failure.
  */
 module_t *set_root_module(
     const char *name,
@@ -158,155 +303,51 @@ module_t *set_root_module(
     if (!name || !action)
         return NULL;
 
-    /* Allocate root_entry on first call */
-    if (!root_entry) {
-        root_entry =
-            create_module_entry(name, usage, options, opt_nr, action, 0);
-        if (!root_entry)
+    module_entry_t *root = module_ctx.root_entry;
+
+    if (!root) {
+        root = create_module_entry(name, usage, options, opt_nr, action, 0);
+        if (!root)
             return NULL;
-        return &root_entry->mod;
+
+        module_ctx.root_entry = root;
+        return &root->mod;
     }
 
-    /* Clean up previous resources if re-initialized */
-    free(root_entry->mod.name);
-    free((char *)root_entry->mod.usage);
-
-    if (root_entry->mod.options) {
-        for (unsigned int i = 0; i < root_entry->mod.opt_nr; i++) {
-            if (root_entry->mod.options[i]) {
-                free((char *)root_entry->mod.options[i]->l_opt);
-                free((char *)root_entry->mod.options[i]->arg_name);
-                free((char *)root_entry->mod.options[i]->desc);
-                free(root_entry->mod.options[i]);
-            }
-        }
-        free(root_entry->mod.options);
-    }
-
-    root_entry->mod.name = NULL;
-    root_entry->mod.usage = NULL;
-    root_entry->mod.options = NULL;
-    root_entry->mod.opt_nr = 0;
-
-    if (root_entry->args) {
-        free(root_entry->args);
-        root_entry->args = NULL;
-        root_entry->args_nr = 0;
-    }
-
-    /* Deep copy of name */
-    root_entry->mod.name = strdup(name);
-    if (!root_entry->mod.name)
+    module_t fresh;
+    if (init_module_public(&fresh, name, usage, options, opt_nr, action) != 0)
         return NULL;
 
-    /* Deep copy of usage syntax string */
-    if (usage) {
-        root_entry->mod.usage = strdup(usage);
-        if (!root_entry->mod.usage) {
-            free(root_entry->mod.name);
-            root_entry->mod.name = NULL;
-            return NULL;
-        }
-    } else {
-        root_entry->mod.usage = NULL;
-    }
+    /* The new configuration is ready: retire the old one and swap. */
+    free_module_tree(&root->sub_modules);
+    free_module_public(&root->mod);
+    free(root->args);
+    root->args = NULL;
+    root->args_nr = 0;
 
-    /* Deep copy of options array */
-    if (options && opt_nr > 0) {
-        root_entry->mod.options = malloc(opt_nr * sizeof(module_option_t *));
-        if (!root_entry->mod.options) {
-            free((char *)root_entry->mod.usage);
-            free(root_entry->mod.name);
-            root_entry->mod.name = NULL;
-            root_entry->mod.usage = NULL;
-            return NULL;
-        }
+    root->mod = fresh;
+    root->level = 0;
+    root->matched = false;
 
-        for (unsigned int i = 0; i < opt_nr; i++) {
-            root_entry->mod.options[i] = malloc(sizeof(module_option_t));
-            if (!root_entry->mod.options[i]) {
-                for (unsigned int j = 0; j < i; j++) {
-                    free((char *)root_entry->mod.options[j]->l_opt);
-                    free((char *)root_entry->mod.options[j]->arg_name);
-                    free((char *)root_entry->mod.options[j]->desc);
-                    free(root_entry->mod.options[j]);
-                }
-                free(root_entry->mod.options);
-                free((char *)root_entry->mod.usage);
-                free(root_entry->mod.name);
-                root_entry->mod.name = NULL;
-                root_entry->mod.usage = NULL;
-                return NULL;
-            }
-            memcpy(
-                root_entry->mod.options[i],
-                options[i],
-                sizeof(module_option_t));
+    list_del(&root->matches);
+    list_init(&root->sub_modules);
+    list_init(&root->siblings);
+    list_init(&root->matches);
 
-            if (options[i]->l_opt)
-                root_entry->mod.options[i]->l_opt = strdup(options[i]->l_opt);
-            if (options[i]->arg_name)
-                root_entry->mod.options[i]->arg_name =
-                    strdup(options[i]->arg_name);
-            if (options[i]->desc)
-                root_entry->mod.options[i]->desc = strdup(options[i]->desc);
-        }
-        root_entry->mod.opt_nr = opt_nr;
-    }
-
-    else {
-        root_entry->mod.options = NULL;
-        root_entry->mod.opt_nr = 0;
-    }
-
-    free_module_tree(&root_entry->sub_modules);
-
-    root_entry->level = 0;
-    root_entry->mod.action = action;
-    list_init(&root_entry->sub_modules);
-    list_init(&root_entry->siblings);
-    list_init(&root_entry->matches);
-
-    return &root_entry->mod;
+    return &root->mod;
 }
 
 /**
- * @brief Frees the standalone global root module and all its allocated memory.
- */
-static void free_root_entry(void)
-{
-    if (!root_entry)
-        return;
-
-    list_del(&root_entry->matches);
-
-    free_module_tree(&root_entry->sub_modules);
-
-    free(root_entry->mod.name);
-    free((char *)root_entry->mod.usage);
-
-    if (root_entry->mod.options) {
-        for (unsigned int i = 0; i < root_entry->mod.opt_nr; i++) {
-            if (root_entry->mod.options[i]) {
-                free((char *)root_entry->mod.options[i]->l_opt);
-                free((char *)root_entry->mod.options[i]->arg_name);
-                free((char *)root_entry->mod.options[i]->desc);
-                free(root_entry->mod.options[i]);
-            }
-        }
-        free(root_entry->mod.options);
-    }
-
-    if (root_entry->args)
-        free(root_entry->args);
-
-    free(root_entry);
-    root_entry = NULL;
-}
-
-/**
- * @brief Allocates and initializes a root-level module entry, then appends it
- * to the global root sub-modules list.
+ * @brief Registers a top-level (level 0) module.
+ *
+ * @param[in] name    Module name. Must not be NULL.
+ * @param[in] usage   Usage syntax pattern, or NULL.
+ * @param[in] options Array of option pointers, or NULL if none.
+ * @param[in] opt_nr  Number of options in @p options.
+ * @param[in] action  Execution handler. Mandatory.
+ *
+ * @return The module's public module_t, or NULL on invalid argument or
+ * allocation failure.
  */
 module_t *add_module(
     const char *name,
@@ -318,22 +359,30 @@ module_t *add_module(
     if (!name || !action)
         return NULL;
 
-    /* Create the module entry at root level (0) */
     module_entry_t *entry =
         create_module_entry(name, usage, options, opt_nr, action, 0);
     if (!entry)
         return NULL;
 
-    /* Append to the global root sub-modules list */
-    list_add_tail(&root_sub_modules, &entry->siblings);
+    list_add_tail(&module_ctx.root_sub_modules, &entry->siblings);
 
     return &entry->mod;
 }
 
 /**
- * @brief Allocates and initializes a new child module entry with a hierarchy
- * level incremented relative to its parent, sets the parent link, and appends
- * it to the parent's sub-modules list.
+ * @brief Registers a sub-module under an existing module.
+ *
+ * The child's level is its parent's level plus one.
+ *
+ * @param[in] parent_mod Parent module. Must not be NULL.
+ * @param[in] name       Sub-module name. Must not be NULL.
+ * @param[in] usage      Usage syntax pattern, or NULL.
+ * @param[in] options    Array of option pointers, or NULL if none.
+ * @param[in] opt_nr     Number of options in @p options.
+ * @param[in] action     Execution handler. Mandatory.
+ *
+ * @return The sub-module's public module_t, or NULL on invalid argument or
+ * allocation failure.
  */
 module_t *add_submodule(
     module_t *parent_mod,
@@ -346,16 +395,13 @@ module_t *add_submodule(
     if (!parent_mod || !name || !action)
         return NULL;
 
-    /* Retrieve the private entry container from the public module pointer */
     module_entry_t *parent_entry = to_module_entry(parent_mod);
 
-    /* Create the child entry with its depth level incremented */
     module_entry_t *child = create_module_entry(
         name, usage, options, opt_nr, action, parent_entry->level + 1);
     if (!child)
         return NULL;
 
-    /* Link child to parent and append to the parent's sub-modules list */
     child->parent = parent_entry;
     list_add_tail(&parent_entry->sub_modules, &child->siblings);
 
@@ -363,16 +409,12 @@ module_t *add_submodule(
 }
 
 /**
- * @brief Searches for a module by its name in a specific sub-modules list.
+ * @brief Looks up a module by name in one sub-modules list.
  *
- * Iterates through the intrusive list starting at the provided head and
- * compares each module entry's name with the target name.
+ * @param[in] sub_modules_head Head of the list to search.
+ * @param[in] name             Module name to find.
  *
- * @param[in] sub_modules_head Pointer to the head node of the sub-modules list.
- * @param[in] name             Name of the module to find.
- *
- * @return Pointer to the matching module_entry_t structure if found, or NULL
- * otherwise.
+ * @return The matching entry, or NULL if there is none.
  */
 static module_entry_t *
 search_module_by_name(list_node_t *sub_modules_head, const char *name)
@@ -384,202 +426,145 @@ search_module_by_name(list_node_t *sub_modules_head, const char *name)
     list_for_each(curr, sub_modules_head)
     {
         module_entry_t *entry = container_of(curr, module_entry_t, siblings);
-        if (entry->mod.name && strcmp(entry->mod.name, name) == 0) {
+        if (entry->mod.name && strcmp(entry->mod.name, name) == 0)
             return entry;
-        }
     }
     return NULL;
 }
 
 /**
- * @brief Recursively frees a module tree and all its allocated resources.
- *
- * Traverses the sub-module list, recursively frees child trees, releases all
- * heap-allocated fields (name, options, argument arrays), and frees the module
- * entries.
- *
- * @param[in] head Pointer to the head node of the module tree or sub-tree to
- * free. Left as a valid, empty (self-referencing) list head on return, so it
- * remains safe to reuse (e.g. root_sub_modules across further add_module()/
- * launch_cli() cycles) or to free again.
- */
-static void free_module_tree(list_node_t *head)
-{
-    if (!head)
-        return;
-
-    list_node_t *curr = head->next;
-    while (curr != head) {
-        list_node_t *next = curr->next;
-        module_entry_t *entry = container_of(curr, module_entry_t, siblings);
-
-        /* Recursively free child sub-modules */
-        free_module_tree(&entry->sub_modules);
-
-        list_del(&entry->matches);
-        list_del(&entry->siblings);
-
-        /* Free allocated fields in public module_t structure */
-        free(entry->mod.name);
-        free((char *)entry->mod.usage);
-        if (entry->mod.options) {
-            for (unsigned int i = 0; i < entry->mod.opt_nr; i++) {
-                if (entry->mod.options[i]) {
-                    free((char *)entry->mod.options[i]->l_opt);
-                    free((char *)entry->mod.options[i]->arg_name);
-                    free((char *)entry->mod.options[i]->desc);
-                    free(entry->mod.options[i]);
-                }
-            }
-            free(entry->mod.options);
-        }
-
-        /* Free captured CLI argument array */
-        if (entry->args)
-            free(entry->args);
-
-        free(entry);
-        curr = next;
-    }
-}
-
-/**
  * @brief Releases every module resource created for this CLI invocation.
+ *
+ * Must run only once matching and dispatch are both finished: destroying the
+ * modules empties matched_mods, which cli_parsing() still needs to walk.
  */
 static void cleanup_cli_modules(void)
 {
-    free_module_tree(&root_sub_modules);
+    free_module_tree(&module_ctx.root_sub_modules);
     free_root_entry();
 }
 
 /**
- * @brief Parses command-line arguments, activates matching modules, and
- * captures options.
- * Traverses `argv` sequentially until NULL to match positional arguments
- * against registered module hierarchies and captures option flags into active
- * module structures.
+ * @brief Matches argv against the module tree and captures option tokens.
  *
- * @note Does not free anything itself: matched modules and their captured
- * arguments must remain alive for cli_parsing() to consume afterward.
- * Callers are responsible for calling cleanup_cli_modules() once, after
- * cli_parsing() has run (see parse_cli()).
+ * Tokens starting with '-' are appended to the args array of the currently
+ * active module (the root module until a module name is matched). Any other
+ * token must be the name of a module in the current scope, which then becomes
+ * the active module. With CLI_ENABLE_MODULES_CHAINING, a name not found in the
+ * current scope is also searched among the top-level modules.
  *
- * @param[in] argv Array of command-line argument strings (NULL-terminated).
+ * Each matched module is appended to matched_mods. The root module is added
+ * lazily, the first time it captures an option, so it only appears there when
+ * it actually has something to process.
  *
- * @return 0 on success, -1 on error
+ * @note Frees nothing: matched modules and their captured tokens must remain
+ * valid for cli_parsing(). The caller must run cleanup_cli_modules() when
+ * done (see parse_cli()).
+ *
+ * @param[in] argv NULL-terminated argument vector; argv[0] is skipped.
+ *
+ * @return 0 on success, -1 on error.
  */
 static int parse_cli_modules(char *const *argv)
 {
     if (!argv || !*argv)
         return 0;
 
-    int ret = -1;
-    list_node_t *current_sub_modules = &root_sub_modules;
+    list_node_t *current_sub_modules = &module_ctx.root_sub_modules;
+    module_entry_t *current_mod = module_ctx.root_entry;
 
-    /* Default context points to root_entry if configured, enabling global
-     * options capture */
-    module_entry_t *current_mod = root_entry;
-
-    for (char **args = (char **)argv + 1; *args != NULL; args++) {
+    for (char *const *args = argv + 1; *args != NULL; args++) {
         const char *arg = *args;
 
-        /* Option processing (arguments starting with '-') */
+        /* Option token: attach it to the active module. */
         if (arg[0] == '-') {
             if (!current_mod) {
                 pr_error(
-                    "Option '%s' is not associated with any active module "
-                    "(root_entry=(null))",
+                    "Option '%s' is not associated with any active module",
                     arg);
-                print_red(
-                    stderr,
-                    "Internal error while parsing option(s) '%s' failed",
-                    arg);
-                goto out;
+                return -1;
             }
 
-            /*
-             * Lazily record the root module as "matched" the first
-             * time it captures a global option.
-             */
-            if (current_mod == root_entry && !root_entry->matched) {
-                root_entry->matched = true;
-                list_add_tail(&matched_mods, &root_entry->matches);
+            if (current_mod == module_ctx.root_entry
+                && !current_mod->matched) {
+                current_mod->matched = true;
+                list_add_tail(&module_ctx.matched_mods, &current_mod->matches);
             }
 
-            /* Dynamic array reallocation based on args_nr */
             char **new_args = realloc(
                 current_mod->args, (current_mod->args_nr + 1) * sizeof(char *));
             if (!new_args) {
                 pr_error("Failed to create an argument");
-                print_red(
-                    stderr,
-                    "Internal error while parsing option(s) '%s' failed",
-                    arg);
-                goto out;
+                return -1;
             }
             current_mod->args = new_args;
-            current_mod->args[current_mod->args_nr++] = (char *)arg;
+            current_mod->args[current_mod->args_nr++] = *args;
 
             continue;
         }
 
-        /* Module search and matching */
+        /* Module name: descend into it. */
         module_entry_t *found = search_module_by_name(current_sub_modules, arg);
 #ifdef CLI_ENABLE_MODULES_CHAINING
-        if (!found && current_sub_modules != &root_sub_modules) {
-            current_sub_modules = &root_sub_modules;
+        if (!found && current_sub_modules != &module_ctx.root_sub_modules) {
+            current_sub_modules = &module_ctx.root_sub_modules;
             found = search_module_by_name(current_sub_modules, arg);
         }
 #endif
         if (!found) {
             pr_error("Module or submodule '%s' unknown in this context", arg);
-            pr_module_short_usage(stderr, prog_name, &current_mod->mod);
-            goto out;
+            return -1;
         }
 
         if (found->matched) {
             pr_error("Module '%s' has already been specified", arg);
-            pr_module_short_usage(stderr, prog_name, &found->mod);
-            goto out;
+            return -1;
         }
 
         found->matched = true;
         current_mod = found;
 
-        list_add_tail(&matched_mods, &found->matches);
+        list_add_tail(&module_ctx.matched_mods, &found->matches);
         current_sub_modules = &found->sub_modules;
     }
 
     pr_info("Loading specified modules completed successfully");
 
 #ifdef DEBUG
-    /* Print execution details */
     list_node_t *curr_node;
-    module_entry_t *e;
-    list_for_each(curr_node, &matched_mods)
+    list_for_each(curr_node, &module_ctx.matched_mods)
     {
-        e = container_of(curr_node, module_entry_t, matches);
+        module_entry_t *e = container_of(curr_node, module_entry_t, matches);
         pr_debug(
             "Module: <%s> [level='%u', '%u' option(s)]",
             e->mod.name,
             e->level,
             e->args_nr);
-        for (unsigned int i = 0; i < e->args_nr; i++) {
+        for (unsigned int i = 0; i < e->args_nr; i++)
             pr_debug("%s", e->args[i]);
-        }
     }
 #endif
 
-    ret = 0;
-
-out:
-    return ret;
+    return 0;
 }
 
+/** Returns @p ch if printable, '#' otherwise (safe to show in diagnostics). */
 #define printable(ch) (isprint((unsigned char)(ch)) ? (ch) : '#')
 
 /**
- * @brief Parses options for a module using getopt_long.
+ * @brief Runs getopt_long() over the tokens captured for one module.
+ *
+ * Every recognized option gets is_set = true and arg_val = its argument.
+ * Unknown options, missing arguments and unmapped codes are reported on
+ * stderr (with the module's usage line when available) and abort the parse.
+ *
+ * @param[in] argc         Number of captured tokens.
+ * @param[in] argv         Captured tokens (without a program name).
+ * @param[in] optstring    getopt_long() short-option string.
+ * @param[in] long_options getopt_long() long-option table, zero terminated.
+ * @param[in] m            Module owning the options. Must not be NULL.
+ *
+ * @return 0 on success, -1 on error.
  */
 static int parse_cli_modules_options(
     int argc,
@@ -588,95 +573,94 @@ static int parse_cli_modules_options(
     const struct option *long_options,
     module_t *m)
 {
+    if (!m)
+        return -1;
+
     if (!argv || argc <= 0)
         return 0;
 
+    /* getopt_long() expects argv[0] to be a program name: use the module's. */
     char **parse_argv = malloc((size_t)(argc + 1) * sizeof(char *));
     if (!parse_argv) {
         pr_error("Allocation memory failed");
-        print_red(stderr, "Internal error while parsing comand line option(s)");
         return -1;
     }
 
-    parse_argv[0] = (m && m->name) ? (char *)m->name : "module";
-    for (int i = 0; i < argc; i++) {
-        parse_argv[i + 1] = (char *)argv[i];
-    }
+    parse_argv[0] = m->name;
+    for (int i = 0; i < argc; i++)
+        parse_argv[i + 1] = argv[i];
     int parse_argc = argc + 1;
 
-    /* Complete reset of getopt internal state (glibc-specific) */
+    /* Full reset of getopt's internal state (glibc-specific optind = 0). */
     optind = 0;
-    opterr = 0; /* Disable default getopt error reporting to handle errors
-                   explicitly */
+    /* Silence getopt's own messages: errors are reported below. */
+    opterr = 0;
 
     int opt;
     int long_idx = -1;
     int ret = 0;
 
     while ((opt = getopt_long(
-                parse_argc, parse_argv, optstring, long_options, &long_idx)) !=
-           -1) {
-        pr_debug(
-            "parsed opt=%d ('%c'), optind=%d", opt, printable(opt), optind);
+                parse_argc, parse_argv, optstring, long_options, &long_idx))
+           != -1) {
+        pr_debug("parsed opt=%d ('%c'), optind=%d", opt, printable(opt), optind);
 
         if (opt == '?') {
-            print_red(
-                stderr,
-                "Error: Unrecognized option ('-%c')\n",
-                printable(optopt));
-            if (m && m->usage)
-                pr_module_usage(stderr, prog_name, m);
+            pr_red(stderr, "Error: Unrecognized option: '-%c'\n",
+                   printable(optopt));
+            if (m->usage)
+                fprintf(stderr, "Usage: %s\n", m->usage);
             ret = -1;
             goto out;
         }
 
         if (opt == ':') {
-            print_red(
-                stderr,
-                "Error: Option requires an argument: '-%c'\n",
-                printable(optopt));
-            if (m && m->usage)
-                pr_module_usage(stderr, prog_name, m);
+            pr_red(stderr, "Error: Option requires an argument: '-%c'\n",
+                   printable(optopt));
+            if (m->usage)
+                fprintf(stderr, "Usage: %s\n", m->usage);
             ret = -1;
             goto out;
         }
 
-        /* Match corresponding option in m->options */
+        /*
+         * Map the getopt result back to the module's option. A long option
+         * reports its index in long_options, which mirrors m->options;
+         * a short option is found by its character.
+         */
         module_option_t *matched = NULL;
 
         if (long_idx >= 0 && (size_t)long_idx < m->opt_nr) {
             matched = m->options[long_idx];
         } else {
             for (size_t i = 0; i < m->opt_nr; i++) {
-                if (m->options[i]->s_opt &&
-                    (int)(unsigned char)m->options[i]->s_opt == opt) {
+                if (m->options[i]->s_opt
+                    && (int)(unsigned char)m->options[i]->s_opt == opt) {
                     matched = m->options[i];
                     break;
                 }
             }
         }
 
-        if (matched) {
-            matched->is_set = true;
-            matched->arg_val = optarg;
-            pr_debug(
-                "matched option '--%s' (-%c), val='%s'",
-                matched->l_opt ? matched->l_opt : "",
-                matched->s_opt ? matched->s_opt : ' ',
-                matched->arg_val ? matched->arg_val : "none");
-        } else {
+        if (!matched) {
             pr_error("unhandled option code: %d", opt);
-            pr_module_usage(stderr, prog_name, m);
             ret = -1;
             goto out;
         }
 
+        matched->is_set = true;
+        matched->arg_val = optarg;
+        pr_debug("matched option '--%s' (-%c), val='%s'",
+                 matched->l_opt ? matched->l_opt : "",
+                 matched->s_opt ? matched->s_opt : ' ',
+                 matched->arg_val ? matched->arg_val : "none");
+
+        /* getopt_long() only updates long_idx for long options. */
         long_idx = -1;
     }
 
-    pr_debug(
-        "Parsing completed successfully for module: %s",
-        m->name ? m->name : "unknown");
+    pr_debug("Parsing completed successfully for module: %s",
+             m->name ? m->name : "unknown");
 
 out:
     free(parse_argv);
@@ -684,41 +668,52 @@ out:
 }
 
 /**
- * @brief Prepares optstring and long_options structures, then initiates
- * parsing.
+ * @brief Parses the captured options of every matched module and runs its
+ * handler.
+ *
+ * For each matched module that has both registered options and captured
+ * tokens, this builds the getopt_long() tables from its option definitions,
+ * parses the tokens, then calls the module's action with only the options
+ * that were set. That array is owned by the framework and released right
+ * after the call, as documented for module_t::action.
+ *
+ * A failing handler stops the run, unless CLI_IGNORE_MODULE_ERRORS is
+ * defined, in which case the next module is processed.
+ *
+ * @return 0 on success, -1 on error.
  */
 static int cli_parsing(void)
 {
     list_node_t *curr_node;
 
-    list_for_each(curr_node, &matched_mods)
+    list_for_each(curr_node, &module_ctx.matched_mods)
     {
         module_entry_t *e = container_of(curr_node, module_entry_t, matches);
         module_t *m = &e->mod;
 
-        if (!m || m->opt_nr == 0 || e->args_nr == 0)
+        if (m->opt_nr == 0 || e->args_nr == 0)
             continue;
 
         char optstring[m->opt_nr * 3 + 2];
         struct option long_options[m->opt_nr + 1];
         size_t optstr_idx = 0;
 
-        /* Leading colon to distinguish between an unknown option ('?') and a
-         * missing argument (':') */
+        /*
+         * Leading ':' makes getopt_long() distinguish an unknown option
+         * ('?') from a missing argument (':').
+         */
         optstring[optstr_idx++] = ':';
 
         for (size_t i = 0; i < m->opt_nr; i++) {
-
             module_option_t *o = m->options[i];
 
-            /* Populate the long_options entry */
             long_options[i].name = o->l_opt;
             long_options[i].has_arg = o->has_arg;
             long_options[i].flag = NULL;
+            /* Long-only options get a synthetic value above the char range. */
             long_options[i].val =
                 o->s_opt ? (int)(unsigned char)o->s_opt : (int)(1000 + i);
 
-            /* Populate optstring for short options */
             if (o->s_opt != 0) {
                 optstring[optstr_idx++] = o->s_opt;
                 if (o->has_arg == required_argument) {
@@ -730,27 +725,23 @@ static int cli_parsing(void)
             }
         }
 
-        /* Sentinel for the end of the long_options array */
+        /* Terminators required by getopt_long(). */
         long_options[m->opt_nr] = (struct option){0};
         optstring[optstr_idx] = '\0';
 
-        pr_debug(
-            "Generated optstring='%s' for %zu options in module '%s'",
-            optstring,
-            (size_t)m->opt_nr,
-            m->name);
+        pr_debug("Generated optstring='%s' for %zu options in module '%s'",
+                 optstring, (size_t)m->opt_nr, m->name);
 
         if (parse_cli_modules_options(
-                (int)e->args_nr, e->args, optstring, long_options, m) != 0) {
+                (int)e->args_nr, e->args, optstring, long_options, m)
+            != 0)
             return -1;
-        }
 
+        /* Hand the handler only the options that were set on the CLI. */
         module_option_t **matched_opts =
             malloc(m->opt_nr * sizeof(module_option_t *));
         if (!matched_opts) {
             pr_error("Failed to allocate matched options array");
-            print_red(
-                stderr, "Internal error while parsing comand line option(s)");
             return -1;
         }
 
@@ -777,21 +768,18 @@ static int cli_parsing(void)
 }
 
 /**
- * @brief Runs the full CLI pipeline: match modules/arguments, then dispatch
- * options and action handlers, then release every module resource exactly
- * once.
+ * @brief Runs the whole CLI pipeline: match, dispatch, then clean up.
  *
- * @param[in] argv Array of command-line argument strings (NULL-terminated).
+ * Cleanup runs exactly once, on both the success and the error path, so
+ * nothing leaks if a stage fails.
+ *
+ * @param[in] argv NULL-terminated argument vector.
  *
  * @return 0 on success, -1 on error.
  */
 static int parse_cli(char *const *argv)
 {
     int ret = -1;
-
-    if (!argv && !*argv)
-        return ret;
-    prog_name = argv[0];
 
     if (parse_cli_modules(argv) != 0)
         goto out;
@@ -805,7 +793,7 @@ out:
     cleanup_cli_modules();
 
     if (ret != 0)
-        pr_error("Failed to parse comand line option(s)");
+        pr_error("Failed to parse command line options");
 
     return ret;
 }
@@ -813,137 +801,4 @@ out:
 int launch_cli(char *const *argv)
 {
     return parse_cli(argv);
-}
-
-/**
- * @brief Renders CLI usage instructions for a module.
- *
- * @param[in] stream Output stream (defaults to stderr if NULL).
- * @param[in] prog_name Executable name or path
- * @param[in] m Pointer to the module structure containing options and metadata.
- *
- * @return 0 on success, -1 if the module pointer is invalid.
- */
-static void
-module_usage_impl(FILE *stream, const char *progr_name, const module_t *m)
-{
-    print_yellow(stream, "Usage: %s %s \n\n", progr_name, m->usage);
-
-    if (!m->options || m->opt_nr == 0) {
-        return;
-    }
-
-    fprintf(stream, "Options:\n");
-
-    for (size_t i = 0; i < m->opt_nr; i++) {
-        const module_option_t *o = m->options[i];
-        char opt_buf[64];
-
-        if (o->s_opt && o->l_opt) {
-            if (o->has_arg == required_argument) {
-                snprintf(
-                    opt_buf,
-                    sizeof(opt_buf),
-                    "  -%c, --%s %s",
-                    o->s_opt,
-                    o->l_opt,
-                    o->arg_name ? o->arg_name : "<val>");
-            } else {
-                snprintf(
-                    opt_buf,
-                    sizeof(opt_buf),
-                    "  -%c, --%s",
-                    o->s_opt,
-                    o->l_opt);
-            }
-        } else if (o->l_opt) {
-            if (o->has_arg == required_argument) {
-                snprintf(
-                    opt_buf,
-                    sizeof(opt_buf),
-                    "      --%s %s",
-                    o->l_opt,
-                    o->arg_name ? o->arg_name : "<val>");
-            } else {
-                snprintf(opt_buf, sizeof(opt_buf), "      --%s", o->l_opt);
-            }
-        } else if (o->s_opt) {
-            if (o->has_arg == required_argument) {
-                snprintf(
-                    opt_buf,
-                    sizeof(opt_buf),
-                    "  -%c %s",
-                    o->s_opt,
-                    o->arg_name ? o->arg_name : "<val>");
-            } else {
-                snprintf(opt_buf, sizeof(opt_buf), "  -%c", o->s_opt);
-            }
-        } else {
-            continue;
-        }
-
-        fprintf(stream, "%-32s %s\n", opt_buf, o->desc ? o->desc : "");
-    }
-    fprintf(stream, "\n");
-}
-
-int pr_module_usage(FILE *stream, const char *progr_name, const module_t *m)
-{
-    const char *name;
-
-    if (!m)
-        return -1;
-
-    if (!stream)
-        stream = stderr;
-
-    if (!progr_name)
-        prog_name = " ";
-
-    name = strrchr(prog_name, '/');
-    if (name != NULL)
-        name++;
-    else
-        name = prog_name;
-
-    module_usage_impl(stream, name, m);
-    return 0;
-}
-
-void pr_module_short_usage(
-    FILE *stream, const char *progr_name, const module_t *m)
-{
-    const char *name;
-
-    if (!m)
-        return;
-
-    if (!stream)
-        stream = stderr;
-
-    if (!progr_name)
-        progr_name = " ";
-
-    name = strrchr(progr_name, '/');
-    if (name != NULL)
-        name++;
-    else
-        name = progr_name;
-
-    /* Highlight in red for error streams (stderr), yellow otherwise */
-    if (stream == stderr) {
-        print_red(
-            stream,
-            "Usage: %s %s %s\n",
-            name,
-            m->name ? m->name : "module",
-            m->usage ? m->usage : "[OPTIONS]");
-    } else {
-        print_yellow(
-            stream,
-            "Usage: %s %s %s\n",
-            name,
-            m->name ? m->name : "module",
-            m->usage ? m->usage : "[OPTIONS]");
-    }
 }

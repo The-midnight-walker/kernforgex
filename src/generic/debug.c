@@ -6,15 +6,15 @@
  * @file      debug.c
  * @author    midnight walker
  * @brief     Logging implementation: file logger and log viewer.
- * @version   0.2
- * @date      2026-08-29
+ * @version   0.3
+ * @date      2026-09-28
  *
- * @details   This file implements the file logger (initialization, log-level
- *            bitmask getters/setters, thread-safe line writing) and a helper
- *            that replays a log file on the console with per-level colors.
+ * @note      Revision 0.3
  *
  * @copyright GNU General Public License v2.0
  */
+
+#define prfx_fmt "debug: "
 
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
@@ -56,42 +56,17 @@ static struct log_ctx ctx = {
  */
 const struct log_level LOG_LEVELS[IDX_COUNT] = {
     [IDX_FATAL] =
-        {"FATAL",
-         LOG_LEVEL_FATAL,
-         DISPLAY_TAG,
-         LOG_LEVEL_FATAL_COLOR,
-         STREAM_STDERR},
-    [IDX_WARN] =
-        {"WARN",
-         LOG_LEVEL_WARN,
-         DISPLAY_TAG,
-         LOG_LEVEL_WARN_COLOR,
-         STREAM_STDERR},
+        {"FATAL", LOG_LEVEL_FATAL, LOG_LEVEL_FATAL_COLOR, STREAM_STDERR},
+    [IDX_WARN] = {"WARN ", LOG_LEVEL_WARN, LOG_LEVEL_WARN_COLOR, STREAM_STDERR},
     [IDX_ERROR] =
-        {"ERROR",
-         LOG_LEVEL_ERROR,
-         DISPLAY_TAG,
-         LOG_LEVEL_ERROR_COLOR,
-         STREAM_STDERR},
-    [IDX_INFO] =
-        {"INFO",
-         LOG_LEVEL_INFO,
-         DISPLAY_TAG,
-         LOG_LEVEL_INFO_COLOR,
-         STREAM_STDOUT},
+        {"ERROR", LOG_LEVEL_ERROR, LOG_LEVEL_ERROR_COLOR, STREAM_STDERR},
+    [IDX_INFO] = {"INFO ", LOG_LEVEL_INFO, LOG_LEVEL_INFO_COLOR, STREAM_STDOUT},
     [IDX_DEBUG] =
-        {"DEBUG",
-         LOG_LEVEL_DEBUG,
-         DISPLAY_TAG,
-         LOG_LEVEL_DEBUG_COLOR,
-         STREAM_STDOUT},
+        {"DEBUG", LOG_LEVEL_DEBUG, LOG_LEVEL_DEBUG_COLOR, STREAM_STDOUT},
 };
 
 /**
  * @brief Writes a whole buffer to a file descriptor, retrying as needed.
- *
- * Handles partial writes and transparently retries when interrupted by a
- * signal (EINTR).
  *
  * @param[in] fd    Destination file descriptor.
  * @param[in] buf   Data to write.
@@ -114,8 +89,16 @@ static bool write_all(int fd, const char *buf, size_t count)
             return false; /* Real I/O error (errno is preserved) */
         }
 
+        if (written == 0) {
+            /* Zero bytes written: cannot make progress, avoid busy-loop */
+            errno = EIO;
+            return false;
+        }
+
         total_written += (size_t)written;
     }
+
+    fsync(fd);
 
     return true;
 }
@@ -180,7 +163,7 @@ int init_logging_ctx(
 unsigned int get_cli_log_mask(void)
 {
     if (!atomic_load(&ctx.is_init))
-        return 0;
+        return LOG_MASK_ALL;
 
     return atomic_load(&ctx.cli_log_mask);
 }
@@ -256,6 +239,10 @@ int log_write(const char *fmt, ...)
     if (msg_len < 0) {
         errno = EILSEQ;
         return LOG_ESYS;
+    }
+
+    if (msg_len > 0 && msg_buf[msg_len - 1] == '\n') {
+        msg_buf[msg_len - 1] = '\0';
     }
 
     /* Assemble the final line */
