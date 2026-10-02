@@ -46,3 +46,4 @@ build
 compile_commands.json
 .cache
 .tldr
+trash/

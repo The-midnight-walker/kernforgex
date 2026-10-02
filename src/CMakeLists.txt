@@ -5,6 +5,8 @@
 file(GLOB_RECURSE SOURCE_FILES
     "${CMAKE_SOURCE_DIR}/src/*.c"
     "${CMAKE_SOURCE_DIR}/src/kernforgex/*.c"
+    "${CMAKE_SOURCE_DIR}/src/generic/*.c"
+    "${CMAKE_SOURCE_DIR}/src/modules/*.c"
 )
 
 # executable name : kfgx
@@ -16,11 +18,13 @@ target_compile_features(${PROJECT_NAME} PRIVATE
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     DEBUG
+    SCRIPT_DIR="${CMAKE_SOURCE_DIR}/kernforgex/scripts"
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     "${CMAKE_SOURCE_DIR}/include/kernforgex"
+    "${CMAKE_SOURCE_DIR}/include/generic"
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE
@@ -30,6 +34,7 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     -Wshadow
     -Werror
     -Wconversion
+    -Wsign-conversion
     -Wpedantic
     -Wformat=2
     -Wincompatible-pointer-types

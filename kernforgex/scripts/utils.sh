@@ -7,15 +7,12 @@
 # ====================
 # CONFIGURATIONS FILES
 # ====================
-# NOTE: resolved relative to KFX_ROOT when the caller exports it (e.g. from
-# kgdb.sh, which already computes its own SCRIPT_DIR). Falls back to the
+# NOTE: resolved relative to KFGX_ROOT when the caller exports it (e.g. from
+# kerndebug.sh, which already computes its own SCRIPT_DIR). Falls back to the
 # previous behaviour (relative to cwd) when unset, so nothing breaks for
 # callers that don't set it.
-CONF_FILE="${KFX_ROOT:-..}/configs/kernforgex.conf"
-PARSER_SH="${KFX_ROOT:-..}/scripts/parser.sh"
-
-# shellcheck source=assets/scripts/parser.sh
-. "${PARSER_SH}"
+# shellcheck disable=SC2034
+CONF_FILE="${KFGX_ROOT:-..}/configs/kernforgex.conf"
 
 #=============
 # OUTPUT STYLE
@@ -73,7 +70,7 @@ IS_LOGIN_ROOT() {
 	# this file was sourced into), not just the operation in progress.
 	if [ "$(id -u)" -ne 0 ]; then
 		print_err 'Not logged in as root to carry out this operation: Permission denied'
-		return 1
+		return 2
 	fi
 	return 0
 }
@@ -199,18 +196,6 @@ write_proc() {
 	return 0
 }
 
-# =======
-# PARSING
-# =======
-# parses kernforgex main configuration file and loads it
-load_config() {
-	if ! parser "${CONF_FILE}"; then
-		print_err "Failed to parse configuration file '${CONF_FILE}'"
-		return 1
-	fi
-	return 0
-}
-
 #========
 # ALIASES
 #========
@@ -227,8 +212,6 @@ INSTALLED_PACKAGES=""
 IS_INSTALLED_PACKAGES() {
 	packages_list="$1"
 	to="$2" # "i" for installation, "r" for removal
-
-    print_info "--- current package status in your environment ---"
 
 	# Disable globbing safely while splitting words
 	set -f
@@ -268,38 +251,38 @@ IS_INSTALLED_PACKAGES() {
 INSTALL_PACKAGES() {
 	# Install all missing packages listed in global $MISSING_PACKAGES
 
-    FAILED_PACKAGES=""
+	FAILED_PACKAGES=""
 
-    if [ -n "${MISSING_PACKAGES}" ]; then
-        IS_LOGIN_ROOT || return 1
+	if [ -n "${MISSING_PACKAGES}" ]; then
+		IS_LOGIN_ROOT || return 1
 
-        print_y '--- installing missing packages ---'
+		print_y '--- installing missing packages ---'
 
-        apt-get update >/dev/null 2>&1
+		apt-get update >/dev/null 2>&1
 
-        for pkg in ${MISSING_PACKAGES}; do
-            if [ "${DO_VERBOSE:-0}" -eq 1 ]; then
-                printf "[ %s ]──╼ " "${pkg}"
-            fi
+		for pkg in ${MISSING_PACKAGES}; do
+			if [ "${DO_VERBOSE:-0}" -eq 1 ]; then
+				printf "[ %s ]──╼ " "${pkg}"
+			fi
 
-            if DEBIAN_FRONTEND=noninteractive apt-get install -y "${pkg}" >/dev/null 2>&1; then
-                if [ "${DO_VERBOSE:-0}" -eq 1 ]; then
-                    printf "%b✔%b\n" "${GREEN}" "${NC}"
-                fi
-            else
-                if [ "${DO_VERBOSE:-0}" -eq 1 ]; then
-                    printf "%b❌%b\n" "${RED}" "${NC}"
-                fi
-                FAILED_PACKAGES="${FAILED_PACKAGES} ${pkg}"
+			if DEBIAN_FRONTEND=noninteractive apt-get install -y "${pkg}" >/dev/null 2>&1; then
+				if [ "${DO_VERBOSE:-0}" -eq 1 ]; then
+					printf "%b✔%b\n" "${GREEN}" "${NC}"
+				fi
+			else
+				if [ "${DO_VERBOSE:-0}" -eq 1 ]; then
+					printf "%b❌%b\n" "${RED}" "${NC}"
+				fi
+				FAILED_PACKAGES="${FAILED_PACKAGES} ${pkg}"
 
-                # Réparation immédiate pour ne pas bloquer les paquets suivants
-                dpkg --configure -a >/dev/null 2>&1
-                DEBIAN_FRONTEND=noninteractive apt-get install -f -y >/dev/null 2>&1
-            fi
-        done
-    else
-        return 0
-    fi
+				# Réparation immédiate pour ne pas bloquer les paquets suivants
+				dpkg --configure -a >/dev/null 2>&1
+				DEBIAN_FRONTEND=noninteractive apt-get install -f -y >/dev/null 2>&1
+			fi
+		done
+	else
+		return 0
+	fi
 
 	if [ -n "${FAILED_PACKAGES}" ]; then
 		print_err "--| following packages installation failed:"
@@ -346,8 +329,8 @@ REMOVE_PACKAGES() {
 	fi
 
 	print_info '--- clean packages ---'
-    DEBIAN_FRONTEND=noninteractive apt-get autoremove -y >/dev/null 2>&1
-    DEBIAN_FRONTEND=noninteractive apt-get autoclean -y >/dev/null 2>&1
+	DEBIAN_FRONTEND=noninteractive apt-get autoremove -y >/dev/null 2>&1
+	DEBIAN_FRONTEND=noninteractive apt-get autoclean -y >/dev/null 2>&1
 
 	if [ -n "${FAILED_PACKAGES}" ]; then
 		print_err "---| following packages removal failed:"

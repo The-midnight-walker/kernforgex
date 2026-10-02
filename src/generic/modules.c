@@ -28,6 +28,40 @@
 #include "modules.h"
 
 /**
+ * @struct module_entry_struct
+ * @brief Private internal container used for hierarchical tree management and
+ * parsing state.
+ */
+typedef struct module_entry_struct {
+    module_t mod; /**< Embedded public module structure */
+
+    char **args; /**< Dynamic array holding raw arguments captured from argv */
+    unsigned int args_nr; /**< Total number of captured argument tokens */
+
+    bool matched; /**< Internal state flag tracking activation during parsing */
+    unsigned int
+        level; /**< Depth level of the module within the tree (0 is root) */
+
+    struct module_entry_struct
+        *parent; /**< Pointer to parent module entry, or NULL if top-level */
+    list_node_t sub_modules; /**< Intrusive list head for child submodules */
+    list_node_t
+        siblings; /**< Intrusive list node linking modules at the same level */
+    list_node_t
+        matches; /**< Intrusive list node chaining modules activated in order */
+} module_entry_t;
+
+/**
+ * @brief Converts a public module pointer to its parent internal entry
+ * container.
+ *
+ * @param[in] user_mod_ptr Pointer to the public module_t structure.
+ * @return Pointer to the enclosing module_entry_t structure.
+ */
+#define to_module_entry(user_mod_ptr)                                          \
+    container_of(user_mod_ptr, module_entry_t, mod)
+
+/**
  * @struct module_ctx_struct
  * @brief Global state of the module registry.
  */
@@ -40,7 +74,7 @@ struct module_ctx_struct {
 
     /**
      * Head of the circular list of top-level (level 0) modules registered
-     * with add_module(). Also the scope searched first by the parser.
+     * with register_module(). Also the scope searched first by the parser.
      */
     list_node_t root_sub_modules;
 
@@ -67,7 +101,6 @@ static struct module_ctx_struct module_ctx = {
         {&module_ctx.root_sub_modules, &module_ctx.root_sub_modules},
     .matched_mods = {&module_ctx.matched_mods, &module_ctx.matched_mods},
     .prog_name = NULL,
-    .mutex = PTHREAD_MUTEX_INITIALIZER,
     .cli_running = false,
 };
 
@@ -205,7 +238,7 @@ static int init_module_public(
     module_t *mod,
     const char *name,
     const char *usage,
-    module_option_t **options,
+    module_option_t options[],
     unsigned int opt_nr,
     int (*action)(int optc, module_option_t **optv))
 {
@@ -228,7 +261,7 @@ static int init_module_public(
         mod->opt_nr = opt_nr;
 
         for (unsigned int i = 0; i < opt_nr; i++) {
-            if (dup_option(&mod->options[i], options[i]) != 0)
+            if (dup_option(&mod->options[i], &options[i]) != 0)
                 goto err;
         }
     }
@@ -256,7 +289,7 @@ err:
 static module_entry_t *create_module_entry(
     const char *name,
     const char *usage,
-    module_option_t **options,
+    module_option_t options[],
     unsigned int opt_nr,
     int (*action)(int optc, module_option_t **optv),
     unsigned int level)
@@ -367,7 +400,7 @@ static void free_root_entry(void)
 module_t *set_root_module(
     const char *name,
     const char *usage,
-    module_option_t **options,
+    module_option_t options[],
     unsigned int opt_nr,
     int (*action)(int optc, module_option_t **optv))
 {
@@ -380,9 +413,13 @@ module_t *set_root_module(
 
     if (!root) {
         root = create_module_entry(name, usage, options, opt_nr, action, 0);
-        if (root)
+        if (root) {
             module_ctx.root_entry = root;
-
+            pr_debug(
+                "Created new root module '%s' with %u options", name, opt_nr);
+        } else {
+            pr_error("Failed to create root module '%s'", name);
+        }
         module_mutex_unlock();
         return root ? &root->mod : NULL;
     }
@@ -411,6 +448,8 @@ module_t *set_root_module(
 
     module_mutex_unlock();
 
+    pr_debug("Re-initialized root module '%s' with %u options", name, opt_nr);
+
     return &root->mod;
 }
 
@@ -430,10 +469,10 @@ module_t *set_root_module(
  * multiple threads. The entry is built lock-free prior to entry; only linking
  * it into root_sub_modules is serialized under `module_ctx.mutex`.
  */
-module_t *add_module(
+module_t *register_module(
     const char *name,
     const char *usage,
-    module_option_t **options,
+    module_option_t options[],
     unsigned int opt_nr,
     int (*action)(int optc, module_option_t **optv))
 {
@@ -473,11 +512,11 @@ module_t *add_module(
  * @warning The caller must guarantee that @p parent_mod remains valid
  * throughout the call.
  */
-module_t *add_submodule(
+module_t *register_submodule(
     module_t *parent_mod,
     const char *name,
     const char *usage,
-    module_option_t **options,
+    module_option_t options[],
     unsigned int opt_nr,
     int (*action)(int optc, module_option_t **optv))
 {
@@ -592,7 +631,7 @@ static int parse_cli_modules(char *const *argv)
         make_arg:
 
             if (!current_mod) {
-                pr_error("root module not set to treat options '%s' ?)", arg);
+                pr_error("No module active to handle option '%s'", arg);
                 goto out;
             }
 
@@ -636,6 +675,11 @@ static int parse_cli_modules(char *const *argv)
                 arg);
             goto make_arg;
         }
+
+#ifdef CLI_ENABLE_MODULES_LINEAR_TREE_CHAINING
+        if (current_mod->args)
+            goto make_arg;
+#endif
 
         found->matched = true;
         current_mod = found;
@@ -687,7 +731,7 @@ out:
  * @param[in] long_options getopt_long() long-option table, zero terminated.
  * @param[in] m            Module owning the options. Must not be NULL.
  *
- * @return 0 on success, -1 on error.
+ * @return 0 on success, 1 if --help/-h was shown, -1 on error.
  *
  * @note **CONCURRENCY && THREAD-SAFETY:** Not thread-safe by itself. Relies on
  * process-global getopt state (`optind`/`optarg`/etc.). The caller
@@ -738,13 +782,6 @@ static int parse_cli_modules_options(
             const char *last_arg = (optind > 0 && optind <= parse_argc)
                                        ? parse_argv[optind - 1]
                                        : NULL;
-            if (optopt == 'h' ||
-                (last_arg && (strcmp(last_arg, "-h") == 0 ||
-                              strcmp(last_arg, "--help") == 0))) {
-                pr_module_usage(stdout, m);
-                ret = 1;
-                goto out;
-            }
 
             if (optopt != 0) {
                 pr_error_to_user(
@@ -797,12 +834,6 @@ static int parse_cli_modules_options(
 
         matched->is_set = true;
         matched->arg_val = optarg;
-        if (matched->s_opt == 'h' ||
-            (matched->l_opt && strcmp(matched->l_opt, "help") == 0)) {
-            pr_module_usage(stdout, m);
-            ret = 1;
-            goto out;
-        }
         pr_debug(
             "matched option '--%s' (-%c), val='%s'",
             matched->l_opt ? matched->l_opt : "",
@@ -883,7 +914,8 @@ static int cli_parsing(void)
             continue;
         }
 
-        char optstring[m->opt_nr * 3 + 3]; /* ':' + 3 chars per option + '\0' */
+        /* '+' + ':' + up to 3 chars per option + '\0' */
+        char optstring[m->opt_nr * 3 + 3];
         struct option long_options[m->opt_nr + 1];
         size_t optstr_idx = 0;
 
@@ -1044,15 +1076,10 @@ static void module_usage_impl(FILE *stream, const module_t *m)
 
     name = name ? name + 1 : progr_name;
 
-    if (!m->usage) {
-        pr_yellow(
-            stream, "Usage: %s %s\n\n", name, m->name ? m->name : "module");
-    } else {
-        pr_yellow(stream, "Usage: %s %s\n\n", name, m->usage);
-    }
+    pr_module_short_usage(stream, m);
 
     if (m->options && m->opt_nr > 0) {
-        fprintf(stream, "Options:\n");
+        fprintf(stream, "Options:\n\n");
 
         for (size_t i = 0; i < m->opt_nr; i++) {
             const module_option_t *o = m->options[i];
@@ -1106,7 +1133,15 @@ static void module_usage_impl(FILE *stream, const module_t *m)
         fprintf(stream, "\n");
     }
 
-    /* If this module has submodules, list them */
+    /*
+     * Lists this module's sub-modules, if any: reads module_ctx.root_entry/
+     * root_sub_modules/entry->sub_modules, so it needs the lock - safe to
+     * take here even when already held by a caller higher up the stack
+     * (cli_parsing() -> parse_cli_modules_options() -> pr_module_usage()),
+     * since module_mutex_lock() is recursive.
+     */
+    module_mutex_lock();
+
     module_entry_t *entry = to_module_entry((module_t *)m);
     list_node_t *sub_mods = (entry == module_ctx.root_entry)
                                 ? &module_ctx.root_sub_modules
@@ -1133,6 +1168,8 @@ static void module_usage_impl(FILE *stream, const module_t *m)
         }
         fprintf(stream, "\n");
     }
+
+    module_mutex_unlock();
 }
 
 int pr_module_usage(FILE *stream, const module_t *m)
@@ -1157,24 +1194,49 @@ void pr_module_short_usage(FILE *stream, const module_t *m)
 
     const char *progr_name = module_get_prog_name();
     const char *name = strrchr(progr_name, '/');
-
     name = name ? name + 1 : progr_name;
 
-    if (stream == stderr) {
-        pr_red(
-            stream,
-            "Usage: %s %s %s\n",
-            name,
-            m->name ? m->name : "module",
-            m->usage ? m->usage : "[OPTIONS]");
-    } else {
-        pr_yellow(
-            stream,
-            "Usage: %s %s %s\n",
-            name,
-            m->name ? m->name : "module",
-            m->usage ? m->usage : "[OPTIONS]");
+    module_mutex_lock();
+
+    const module_entry_t *entry = to_module_entry((module_t *)m);
+
+    size_t depth = 0;
+    const module_entry_t *curr = entry;
+    while (curr) {
+        depth++;
+        curr = curr->parent;
     }
+
+    const module_t *chain[depth];
+    size_t idx = depth;
+    curr = entry;
+    while (curr) {
+        chain[--idx] = &(curr->mod);
+        curr = curr->parent;
+    }
+
+#define PRINT_USAGE(fmt, ...)                                                  \
+    do {                                                                       \
+        if (stream == stderr)                                                  \
+            pr_red(stream, fmt, ##__VA_ARGS__);                                \
+        else                                                                   \
+            pr_yellow(stream, fmt, ##__VA_ARGS__);                             \
+    } while (0)
+
+    PRINT_USAGE("Usage: %s", name);
+
+    /* avoid to print the root module name */
+    if (m != (const module_t *)module_ctx.root_entry) {
+        for (size_t i = 0; i < depth; i++) {
+            PRINT_USAGE(" %s", chain[i]->name ? chain[i]->name : "module");
+        }
+    }
+
+    PRINT_USAGE(" %s\n", m->usage ? m->usage : "[OPTIONS]");
+
+#undef PRINT_USAGE
+
+    module_mutex_unlock();
 }
 
 /**

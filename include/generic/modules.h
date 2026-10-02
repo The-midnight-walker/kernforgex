@@ -72,40 +72,6 @@ typedef struct module_struct {
 } module_t;
 
 /**
- * @struct module_entry_struct
- * @brief Private internal container used for hierarchical tree management and
- * parsing state.
- */
-typedef struct module_entry_struct {
-    module_t mod; /**< Embedded public module structure */
-
-    char **args; /**< Dynamic array holding raw arguments captured from argv */
-    unsigned int args_nr; /**< Total number of captured argument tokens */
-
-    bool matched; /**< Internal state flag tracking activation during parsing */
-    unsigned int
-        level; /**< Depth level of the module within the tree (0 is root) */
-
-    struct module_entry_struct
-        *parent; /**< Pointer to parent module entry, or NULL if top-level */
-    list_node_t sub_modules; /**< Intrusive list head for child submodules */
-    list_node_t
-        siblings; /**< Intrusive list node linking modules at the same level */
-    list_node_t
-        matches; /**< Intrusive list node chaining modules activated in order */
-} module_entry_t;
-
-/**
- * @brief Converts a public module pointer to its parent internal entry
- * container.
- *
- * @param[in] user_mod_ptr Pointer to the public module_t structure.
- * @return Pointer to the enclosing module_entry_t structure.
- */
-#define to_module_entry(user_mod_ptr)                                          \
-    container_of(user_mod_ptr, module_entry_t, mod)
-
-/**
  * @brief Registers a new top-level (Level 0) module in the global hierarchy.
  *
  * @param[in] name    Name identifying the module. Must not be NULL.
@@ -122,10 +88,10 @@ typedef struct module_entry_struct {
  * deep-copying are performed lock-free prior to entry; only the final link
  * step into `root_sub_modules` is serialized under `module_ctx.mutex`.
  */
-module_t *add_module(
+module_t *register_module(
     const char *name,
     const char *usage,
-    module_option_t **options,
+    module_option_t options[],
     unsigned int opt_nr,
     int (*action)(int optc, module_option_t **optv));
 
@@ -149,7 +115,7 @@ module_t *add_module(
 module_t *set_root_module(
     const char *name,
     const char *usage,
-    module_option_t **options,
+    module_option_t options[],
     unsigned int opt_nr,
     int (*action)(int optc, module_option_t **optv));
 
@@ -174,11 +140,11 @@ module_t *set_root_module(
  * @warning The caller must guarantee that `parent_mod` remains valid during the
  * call.
  */
-module_t *add_submodule(
+module_t *register_submodule(
     module_t *parent_mod,
     const char *name,
     const char *usage,
-    module_option_t **options,
+    module_option_t options[],
     unsigned int opt_nr,
     int (*action)(int optc, module_option_t **optv));
 

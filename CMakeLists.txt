@@ -17,7 +17,7 @@ file(GLOB_RECURSE FORMAT_FILES
 )
 
 file(GLOB_RECURSE SHELL_FILES
-    "${CMAKE_CURRENT_SOURCE_DIR}/assets/scripts/*.sh"
+    "${CMAKE_CURRENT_SOURCE_DIR}/kernforgex/scripts/*.sh"
 )
 
 list(FILTER FORMAT_FILES EXCLUDE REGEX "^${CMAKE_SOURCE_DIR}/build/")
