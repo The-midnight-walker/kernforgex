@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-2.0
+#
+# clang-format --version = 1:14.0-55.7~deb12u1
+
+Language: Cpp
+BasedOnStyle: LLVM
+
+ColumnLimit: 80
+ReflowComments: true
+BreakStringLiterals: true
+
+BinPackParameters: false
+BinPackArguments: false
+AlignAfterOpenBracket: AlwaysBreak
+
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+
+PointerAlignment: Right
+BreakBeforeBraces: Custom
+
+BraceWrapping:
+  AfterFunction: true
+AllowShortFunctionsOnASingleLine: None
+
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+
+SpaceBeforeParens: ControlStatements

@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: GPL-2.0
+#
+# vim: set ts=8 sw=8 noet tw=80 cc=80 fo+=t :
+
+* text=auto eol=lf
+
+#
+# C files
+#
+*.c     text diff=cpp eol=lf
+*.h     text diff=cpp eol=lf
+*.cpp   text diff=cpp eol=lf
+*.hpp   text diff=cpp eol=lf
+
+#
+# shell scripts files
+#
+*.sh    text eol=lf
+*.bash  text eol=lf
+
+#
+# make && cmake
+#
+Makefile        text eol=lf
+Makefile.*      text eol=lf
+*.mk            text eol=lf
+CMakeLists.txt  text eol=lf
+*.cmake         text eol=lf
+
+*.md        text eol=lf
+*.txt       text eol=lf
+*.json      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+.gitignore  text eol=lf
+
+*.o         binary
+*.a         binary
+*.so        binary
+*.elf       binary
+*.bin       binary
+*.png       binary
+*.jpg       binary
+*.tar.gz    binary
