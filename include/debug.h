@@ -2,18 +2,6 @@
 //
 // vim: set ts=8 sw=8 noet tw=80 cc=80 fo+=t :
 
-/**
- * @file      debug.h
- * @author    midnight walker
- * @brief     Logging API: console log macros, file logger and log-level table.
- * @version   0.2
- * @date      2026-10-01
- *
- * @note      Revision 0.3
- *
- * @copyright GNU General Public License v2.0
- */
-
 #ifndef INCLUDE_DEBUG_H
 #define INCLUDE_DEBUG_H
 

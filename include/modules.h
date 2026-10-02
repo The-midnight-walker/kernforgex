@@ -9,6 +9,10 @@
 #define DFLT_PROG_NAME "kfgx"
 #endif
 
+#ifndef SCRIPT_DIR
+#define SCRIPT_DIR "/bin/" DFLT_PROG_NAME
+#endif
+
 /**
  * @name Command Chaining Configuration
  * @brief Command chaining support: allows falling back to top-level submodules
@@ -31,17 +35,47 @@
 // #define CLI_IGNORE_MODULE_ERRORS
 /** @} */
 
+/**
+ * @brief Disable linear tree chaining logic for modules.
+ *
+ * When defined, this macro deactivates the fallback or legacy linear flattening
+ * mechanism for module trees, enforcing strictly hierarchical parent-child
+ * relationship resolution during command-line parsing and option evaluation.
+ *
+ * @{
+ */
+#define CLI_ENABLE_MODULES_LINEAR_TREE_CHAINING
+/** @} */
+
 #include <generic/modules.h>
 
+    /**
+     * @brief Initializes the kfgx module
+     *
+     * --------------------------------------------------------------------
+     * kfgx (root/default) Module
+     *
+     * Usage: [-v|--verbose] [-h| --help]
+     * ---------------------------------------------------------------------
+     */
+    int
+    init_module_kfgx(void);
+
+#define KERDEBUG_MODULE_NAME "kerndebug"
+
+#ifndef KERNDEBUG_SH
+#define KERNDEBUG_SH SCRIPT_DIR "/kerndebug.sh"
+#endif
 /**
- * @brief Initializes the kfgx module
+ * @brief Initializes the kerndebug module
  *
  * --------------------------------------------------------------------
- * kfgx (root/default) Module
+ * kerndebug  Module for kernel debugging environment setup and management
  *
- * Usage: [-v|--verbose] [-h| --help]
+ * Usage: [-v|--verbose] [-h|--help] [-p|--packages [-i|--install] [-r|--remove]
+ * [-l|--list] ]
  * ---------------------------------------------------------------------
  */
-int init_module_kfgx(void);
+int init_module_kerndebug(void);
 
 #endif /* INCLUDE_MODULE_H */

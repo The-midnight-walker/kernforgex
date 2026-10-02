@@ -3,11 +3,11 @@
 // vim: set ts=8 sw=8 noet tw=80 cc=80 fo+=t :
 
 /**
- * @file      main.c
+ * @file      kfgx_mod.c
  * @author    midnight walker
- * @brief     Test harness and application entry point demonstrating the
- *            hierarchical CLI module registry and the concurrent logging API.
- * @version   0.4
+ * @brief     Root module implementation for the kernforgex CLI application,
+ *            providing the default command-line interface and option parsing.
+ * @version   0.1
  * @date      2026-09-30
  * @copyright GNU General Public License v2.0
  *

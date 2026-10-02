@@ -57,6 +57,7 @@ int main(int argc, char **argv)
      */
     int (*init_module[])(void) = {
         init_module_kfgx,
+        init_module_kerndebug,
     };
 
     for (size_t i = 0; i < sizeof(init_module) / sizeof(init_module[0]); i++) {

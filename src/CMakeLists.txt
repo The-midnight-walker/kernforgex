@@ -18,6 +18,7 @@ target_compile_features(${PROJECT_NAME} PRIVATE
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     DEBUG
+    SCRIPT_DIR="${CMAKE_SOURCE_DIR}/kernforgex/scripts"
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE

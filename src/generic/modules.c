@@ -676,6 +676,11 @@ static int parse_cli_modules(char *const *argv)
             goto make_arg;
         }
 
+#ifdef CLI_ENABLE_MODULES_LINEAR_TREE_CHAINING
+        if (current_mod->args)
+            goto make_arg;
+#endif
+
         found->matched = true;
         current_mod = found;
 
@@ -829,12 +834,6 @@ static int parse_cli_modules_options(
 
         matched->is_set = true;
         matched->arg_val = optarg;
-        if (matched->s_opt == 'h' ||
-            (matched->l_opt && strcmp(matched->l_opt, "help") == 0)) {
-            pr_module_usage(stdout, m);
-            ret = 1;
-            goto out;
-        }
         pr_debug(
             "matched option '--%s' (-%c), val='%s'",
             matched->l_opt ? matched->l_opt : "",
@@ -1077,15 +1076,10 @@ static void module_usage_impl(FILE *stream, const module_t *m)
 
     name = name ? name + 1 : progr_name;
 
-    if (!m->usage) {
-        pr_yellow(
-            stream, "Usage: %s %s\n\n", name, m->name ? m->name : "module");
-    } else {
-        pr_yellow(stream, "Usage: %s %s\n\n", name, m->usage);
-    }
+    pr_module_short_usage(stream, m);
 
     if (m->options && m->opt_nr > 0) {
-        fprintf(stream, "Options:\n");
+        fprintf(stream, "Options:\n\n");
 
         for (size_t i = 0; i < m->opt_nr; i++) {
             const module_option_t *o = m->options[i];
@@ -1200,24 +1194,49 @@ void pr_module_short_usage(FILE *stream, const module_t *m)
 
     const char *progr_name = module_get_prog_name();
     const char *name = strrchr(progr_name, '/');
-
     name = name ? name + 1 : progr_name;
 
-    if (stream == stderr) {
-        pr_red(
-            stream,
-            "Usage: %s %s %s\n",
-            name,
-            m->name ? m->name : "module",
-            m->usage ? m->usage : "[OPTIONS]");
-    } else {
-        pr_yellow(
-            stream,
-            "Usage: %s %s %s\n",
-            name,
-            m->name ? m->name : "module",
-            m->usage ? m->usage : "[OPTIONS]");
+    module_mutex_lock();
+
+    const module_entry_t *entry = to_module_entry((module_t *)m);
+
+    size_t depth = 0;
+    const module_entry_t *curr = entry;
+    while (curr) {
+        depth++;
+        curr = curr->parent;
     }
+
+    const module_t *chain[depth];
+    size_t idx = depth;
+    curr = entry;
+    while (curr) {
+        chain[--idx] = &(curr->mod);
+        curr = curr->parent;
+    }
+
+#define PRINT_USAGE(fmt, ...)                                                  \
+    do {                                                                       \
+        if (stream == stderr)                                                  \
+            pr_red(stream, fmt, ##__VA_ARGS__);                                \
+        else                                                                   \
+            pr_yellow(stream, fmt, ##__VA_ARGS__);                             \
+    } while (0)
+
+    PRINT_USAGE("Usage: %s", name);
+
+    /* avoid to print the root module name */
+    if (m != (const module_t *)module_ctx.root_entry) {
+        for (size_t i = 0; i < depth; i++) {
+            PRINT_USAGE(" %s", chain[i]->name ? chain[i]->name : "module");
+        }
+    }
+
+    PRINT_USAGE(" %s\n", m->usage ? m->usage : "[OPTIONS]");
+
+#undef PRINT_USAGE
+
+    module_mutex_unlock();
 }
 
 /**
