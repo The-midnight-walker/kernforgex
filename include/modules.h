@@ -107,7 +107,7 @@ int init_module_ksys(void);
  * system engineering handle module implementation
  *
  * Usage: [-v|--verbose] [-h|--help] [-c|--color] [-p|--packages [-i|--install]
- * [-r|--remove] [-l|--list] ]
+ * [-r|--remove] [-l|--list] ] [-f|--files [-s|--set] [-l|--list] ]
  * -----------------------------------------------------------------------------
  */
 int init_module_kbuild(void);

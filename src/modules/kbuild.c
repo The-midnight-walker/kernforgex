@@ -111,7 +111,7 @@ int init_module_kbuild()
              .l_opt = "packages",
              .has_arg = no_argument,
              .arg_name = NULL,
-             .desc = "List debugging packages",
+             .desc = "List kernel build & dev core packages",
              .arg_val = NULL,
              .is_set = false},
         [OPT_INSTALL] =
@@ -119,7 +119,7 @@ int init_module_kbuild()
              .l_opt = "install",
              .has_arg = no_argument,
              .arg_name = NULL,
-             .desc = "Install debugging packages",
+             .desc = "Install  packages",
              .arg_val = NULL,
              .is_set = false},
         [OPT_REMOVE] =
@@ -127,7 +127,7 @@ int init_module_kbuild()
              .l_opt = "remove",
              .has_arg = no_argument,
              .arg_name = NULL,
-             .desc = "Remove debugging packages",
+             .desc = "Remove packages",
              .arg_val = NULL,
              .is_set = false},
         [OPT_COLOR] =
