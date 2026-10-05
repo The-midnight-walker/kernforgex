@@ -29,6 +29,18 @@ int main(int argc, char **argv)
     int ret;
     (void)argc;
 
+    /*
+     * Static array of function pointers pointing to the initialization
+     * routines of each subsystem. This ensures an extensible and clean
+     * linear bootstrap sequence.
+     */
+    int (*init_module[])(void) = {
+        init_module_kfgx,
+        init_module_kdbg,
+        init_module_kbuild,
+        init_module_ksys,
+    };
+
     /* Logging Subsystem Initialization */
     ret = init_logging_ctx(
         LOG_CLI_MASK,
@@ -49,16 +61,6 @@ int main(int argc, char **argv)
     } else {
         pr_info("Logging subsystem initialized successfully");
     }
-
-    /*
-     * Static array of function pointers pointing to the initialization
-     * routines of each subsystem. This ensures an extensible and clean
-     * linear bootstrap sequence.
-     */
-    int (*init_module[])(void) = {
-        init_module_kfgx,
-        init_module_kerndebug,
-    };
 
     for (size_t i = 0; i < sizeof(init_module) / sizeof(init_module[0]); i++) {
         if (init_module[i]() != 0) {

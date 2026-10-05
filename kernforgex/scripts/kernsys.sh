@@ -5,19 +5,21 @@
 # vim: set ts=8 sw=8 noet tw=80 cc=80 fo+=t :
 #
 # ==============================================================================
-#       KERNDEBUG.SH - Linux Kernel Debugging Environment Setup
+#       KERNSYS.SH - Linux Kernel & System Environment Setup
 # ==============================================================================
 #
 # NAME
-#    kerndebug - Configures a Linux kernel debugging environment.
+#    kernsys - Configures the Linux kernel, driver,
+#              and system development environment.
 #
 # SYNOPSIS
-#    kerndebug [OPTIONS] [COMMAND]
+#    kernsys [OPTIONS] [COMMAND]
 #
 # DESCRIPTION
-#    kerndebug automates the setup and maintenance of a Linux kernel
-#    debugging environment. It manages the installation and uninstallation
-#    of required packages  and tunes kernel and system parameters.
+#    kernsys automates the setup, and maintenance of the necessary
+#    miscellaneous environment for Linux kernel development, driver writing,
+#    and overall low-level system engineering. It manages required packages and
+#    tunes system parameters.
 #
 # EXIT STATUS
 #   0    Success
@@ -53,14 +55,14 @@ fi
 # @brief Parse the given configuration file and load the relevant variables.
 #
 # @details This function reads the specified configuration file and extracts
-#          the necessary variables for kernel debugging setup. It populates
-#          the global variables used by other functions in this script.
+#          the necessary variables. It populates the global variables used
+#          by other functions in this script.
 #
 # @param config_file The path to the configuration file to be parsed.
 # @param action The action to be performed (install, remove, list).
 # @return 0 on success, 1 if the configuration file is missing or invalid.
 # ==============================================================================
-kerndebug_load_config() {
+kernsys_load_config() {
 	local_config_file="$1"
 	local_action="$2"
 	local_section=""
@@ -77,7 +79,7 @@ kerndebug_load_config() {
 
 	# Retrieve the packages from the configuration file based on the action
 	if [ "${local_action}" = "p" ]; then
-		pkg_kdebug=""
+		pkg_sys=""
 
 		while IFS= read -r local_line || [ -n "${local_line}" ]; do
 			# Strip comments and surrounding whitespace
@@ -94,13 +96,13 @@ kerndebug_load_config() {
 				;;
 			esac
 
-			if [ "${local_section}" = "packages.debug" ]; then
-				pkg_kdebug="${pkg_kdebug} ${local_line}"
+			if [ "${local_section}" = "packages.system" ]; then
+				pkg_sys="${pkg_sys} ${local_line}"
 			fi
 		done <"${local_config_file}"
 
 		# Clean leading and trailing whitespaces properly
-		pkg_kdebug=$(printf '%s' "${pkg_kdebug}" |
+		pkg_sys=$(printf '%s' "${pkg_sys}" |
 			sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 	fi
 
@@ -110,7 +112,7 @@ kerndebug_load_config() {
 # ===================
 # PACKAGES MANAGEMENT
 # ===================
-# "$pkg_kdebug" : Debug packages retrieved from configuration file.
+# "$pkg_sys" : Build packages retrieved from configuration file.
 # "$CONF_FILE" : Configuration file path provided from sourcing
 #                the utils.sh script.
 # Provided by the load_config function, which is called in main
@@ -118,16 +120,16 @@ kerndebug_load_config() {
 _load_packages_config() {
 	# shellcheck source=kernforgex/scripts/utils.sh
 	# shellcheck disable=SC2154
-	kerndebug_load_config "${CONF_FILE}" "p" || return 1
+	kernsys_load_config "${CONF_FILE}" "p" || return 1
 
-	print_info 'Current debugging core packages status in your environment'
+	print_info "Current core system packages status in your environment"
 }
 
 _install_packages() {
 
 	_load_packages_config || return 1
-	if ! IS_INSTALLED_PACKAGES "${pkg_kdebug}" "i"; then
-		print_g "No debugging core packages to install found"
+	if ! IS_INSTALLED_PACKAGES "${pkg_sys}" "i"; then
+		print_g "No core system packages to install found"
 		return 0
 	fi
 
@@ -137,8 +139,8 @@ _install_packages() {
 _remove_packages() {
 
 	_load_packages_config || return 1
-	if ! IS_INSTALLED_PACKAGES "${pkg_kdebug}" "r"; then
-		print_g "No debugging core packages to remove found"
+	if ! IS_INSTALLED_PACKAGES "${pkg_sys}" "r"; then
+		print_g "No core system to remove found"
 		return 0
 	fi
 
@@ -148,7 +150,7 @@ _remove_packages() {
 _list_packages() {
 	_load_packages_config || return 1
 
-	IS_INSTALLED_PACKAGES "${pkg_kdebug}" "i"
+	IS_INSTALLED_PACKAGES "${pkg_sys}" "i"
 }
 
 main() {
@@ -180,13 +182,13 @@ main() {
 			shift
 			;;
 
-		-p | --packages)
-			DO_PACKAGES=1
+		-c | --color)
+			DO_COLOR=1
 			shift
 			;;
 
-		-c | --color)
-			DO_COLOR=1
+		-p | --packages)
+			DO_PACKAGES=1
 			shift
 			;;
 
@@ -231,6 +233,9 @@ main() {
 			DO_VERBOSE=1
 			_list_packages || return 1
 		fi
+	fi
+
+		return 0
 	fi
 
 	return 0

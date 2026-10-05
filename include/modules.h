@@ -49,33 +49,67 @@
 
 #include <generic/modules.h>
 
-    /**
-     * @brief Initializes the kfgx module
-     *
-     * --------------------------------------------------------------------
-     * kfgx (root/default) Module
-     *
-     * Usage: [-v|--verbose] [-h| --help]
-     * ---------------------------------------------------------------------
-     */
-    int
-    init_module_kfgx(void);
+/**
+ * @brief Initializes the kfgx module
+ *
+ * -----------------------------------------------------------------------------
+ * kfgx (root/default) Module
+ *
+ * Usage: [-h| --help]
+ * -----------------------------------------------------------------------------
+ */
+int init_module_kfgx(void);
 
-#define KERDEBUG_MODULE_NAME "kerndebug"
+#define KDBG_MODULE_NAME "kdbg"
 
-#ifndef KERNDEBUG_SH
-#define KERNDEBUG_SH SCRIPT_DIR "/kerndebug.sh"
+#ifndef KDBG_SH
+#define KDBG_SH SCRIPT_DIR "/kerndebug.sh"
+#endif
+/**
+ * @brief Initializes the kdbg module
+ *
+ * -----------------------------------------------------------------------------
+ * kdbg  Module for kernel debugging environment setup and management
+ *
+ * Usage: [-v|--verbose] [-h|--help] [-c|--color] [-p|--packages [-i|--install]
+ * [-r|--remove] [-l|--list] ]
+ * -----------------------------------------------------------------------------
+ */
+int init_module_kdbg(void);
+
+#define KSYS_MODULE_NAME "ksys"
+
+#ifndef KSYS_SH
+#define KSYS_SH SCRIPT_DIR "/kernsys.sh"
+#endif
+/**
+ * @brief Initializes the ksys module
+ *
+ * -----------------------------------------------------------------------------
+ * ksys  Module for linux system handle module implementation.
+ *
+ * Usage: [-v|--verbose] [-h|--help] [-c|--color] [-p|--packages [-i|--install]
+ * [-r|--remove] [-l|--list] ]
+ * -----------------------------------------------------------------------------
+ */
+int init_module_ksys(void);
+
+#define KBUILD_MODULE_NAME "kbuild"
+
+#ifndef KBUILD_SH
+#define KBUILD_SH SCRIPT_DIR "/kernbuild.sh"
 #endif
 /**
  * @brief Initializes the kerndebug module
  *
- * --------------------------------------------------------------------
- * kerndebug  Module for kernel debugging environment setup and management
+ * -----------------------------------------------------------------------------
+ * kbuild  Module for Linux kernel building and overall low-level
+ * system engineering handle module implementation
  *
- * Usage: [-v|--verbose] [-h|--help] [-p|--packages [-i|--install] [-r|--remove]
- * [-l|--list] ]
- * ---------------------------------------------------------------------
+ * Usage: [-v|--verbose] [-h|--help] [-c|--color] [-p|--packages [-i|--install]
+ * [-r|--remove] [-l|--list] ]
+ * -----------------------------------------------------------------------------
  */
-int init_module_kerndebug(void);
+int init_module_kbuild(void);
 
 #endif /* INCLUDE_MODULE_H */
