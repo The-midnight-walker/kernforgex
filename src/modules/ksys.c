@@ -31,6 +31,8 @@ enum ksys_module_opts {
     OPT_REMOVE,
     OPT_LIST,
     OPT_COLOR,
+    OPT_SET,
+    OPT_FILES,
 
     /*sentinel value for the end of the array */
     OPTS_NR
@@ -110,7 +112,7 @@ int init_module_ksys()
              .l_opt = "packages",
              .has_arg = no_argument,
              .arg_name = NULL,
-             .desc = "List debugging packages",
+             .desc = "List system core packages",
              .arg_val = NULL,
              .is_set = false},
         [OPT_COLOR] =
@@ -126,7 +128,7 @@ int init_module_ksys()
              .l_opt = "install",
              .has_arg = no_argument,
              .arg_name = NULL,
-             .desc = "Install debugging packages",
+             .desc = "Install system core packages",
              .arg_val = NULL,
              .is_set = false},
         [OPT_REMOVE] =
@@ -134,7 +136,23 @@ int init_module_ksys()
              .l_opt = "remove",
              .has_arg = no_argument,
              .arg_name = NULL,
-             .desc = "Remove debugging packages",
+             .desc = "Remove system core packages",
+             .arg_val = NULL,
+             .is_set = false},
+        [OPT_FILES] =
+            {.s_opt = 'f',
+             .l_opt = "files",
+             .has_arg = no_argument,
+             .arg_name = NULL,
+             .desc = "List system core configuration files",
+             .arg_val = NULL,
+             .is_set = false},
+        [OPT_SET] =
+            {.s_opt = 's',
+             .l_opt = "set",
+             .has_arg = no_argument,
+             .arg_name = NULL,
+             .desc = "Set items (files,...) current configurations",
              .arg_val = NULL,
              .is_set = false},
         [OPT_LIST] = {
@@ -149,7 +167,7 @@ int init_module_ksys()
     ksys_module = register_module(
         KSYS_MODULE_NAME,
         "[-v|--verbose] [-c|--color] [-h|--help] [-p|--packages [-i|--install] "
-        "[-r|--remove] [-l|--list] ]",
+        "[-r|--remove] [-l|--list] ] [-f|--files [-s|--set] [-l|--list] ]",
         ksys_opts,
         OPTS_NR,
         ksys_action);

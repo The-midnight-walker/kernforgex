@@ -17,7 +17,7 @@ target_compile_features(${PROJECT_NAME} PRIVATE
 )
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
-    RELEASE
+    DEBUG
     SCRIPT_DIR="${CMAKE_SOURCE_DIR}/kernforgex/scripts"
 )
 
