@@ -3,17 +3,17 @@
 // vim: set ts=8 sw=8 noet tw=80 cc=80 fo+=t :
 
 /**
- * @file      kerndebug.c
+ * @file      ksys.c
  * @author    midnight walker
- * @brief     Kernel debugging module implementation.
+ * @brief     Linux system handle module implementation.
  *
  * @version   0.1
- * @date      2026-10-02
+ * @date      2026-10-03
  * @copyright GNU General Public License v2.0
  *
  */
 
-#define prfx_fmt "module-kerndebug: "
+#define prfx_fmt "module-ksys: "
 
 #include <stdlib.h>
 
@@ -21,23 +21,24 @@
 #include "modules.h"
 #include "shell.h"
 
-static const module_t *kerndebug_module = NULL;
+static const module_t *ksys_module = NULL;
 
-enum kerndebug_module_opts {
+enum ksys_module_opts {
     OPT_HELP,
     OPT_VERBOSE,
     OPT_PACKAGE,
     OPT_INSTALL,
     OPT_REMOVE,
     OPT_LIST,
+    OPT_COLOR,
 
     /*sentinel value for the end of the array */
     OPTS_NR
 };
 
-int kerndebug_action(int optc, module_option_t **optv)
+int ksys_action(int optc, module_option_t **optv)
 {
-    pr_debug("Executing action for module '%s'", KERDEBUG_MODULE_NAME);
+    pr_debug("Executing action for module '%s'", KSYS_MODULE_NAME);
 
     char *sh_args[optc + 2];
     char opt_bufs[optc > 0 ? optc : 1][3];
@@ -46,7 +47,12 @@ int kerndebug_action(int optc, module_option_t **optv)
     size_t buf_idx = 0;
     int ret = 0;
 
-    sh_args[idx++] = (char *)KERDEBUG_MODULE_NAME;
+    sh_args[idx++] = (char *)KSYS_MODULE_NAME;
+
+    if (0 == optc || !optv || !*optv) {
+        pr_module_usage(stdout, ksys_module);
+        return -1;
+    }
 
     for (int i = 0; i < optc; i++) {
         module_option_t *o = optv[i];
@@ -55,7 +61,7 @@ int kerndebug_action(int optc, module_option_t **optv)
             continue;
 
         if (o->s_opt == 'h' || (o->l_opt && strcmp(o->l_opt, "help") == 0)) {
-            pr_module_usage(stdout, kerndebug_module);
+            pr_module_usage(stdout, ksys_module);
             return ret;
         }
 
@@ -72,17 +78,17 @@ int kerndebug_action(int optc, module_option_t **optv)
 
     sh_args[idx] = NULL;
 
-    ret = execve_shell_script(KERNDEBUG_SH, sh_args);
+    ret = execve_shell_script(KSYS_SH, sh_args);
 
     if (2 == ret)
-        pr_module_usage(stderr, kerndebug_module);
+        pr_module_usage(stderr, ksys_module);
 
     return ret;
 }
 
-int init_module_kerndebug()
+int init_module_ksys()
 {
-    module_option_t kerndebug_opts[OPTS_NR] = {
+    module_option_t ksys_opts[OPTS_NR] = {
         [OPT_HELP] =
             {.s_opt = 'h',
              .l_opt = "help",
@@ -105,6 +111,14 @@ int init_module_kerndebug()
              .has_arg = no_argument,
              .arg_name = NULL,
              .desc = "List debugging packages",
+             .arg_val = NULL,
+             .is_set = false},
+        [OPT_COLOR] =
+            {.s_opt = 'c',
+             .l_opt = "color",
+             .has_arg = no_argument,
+             .arg_name = NULL,
+             .desc = "Color output text",
              .arg_val = NULL,
              .is_set = false},
         [OPT_INSTALL] =
@@ -132,15 +146,15 @@ int init_module_kerndebug()
             .arg_val = NULL,
             .is_set = false}};
 
-    kerndebug_module = register_module(
-        KERDEBUG_MODULE_NAME,
-        "[-v|--verbose] [-h|--help] [-p|--packages [-i|--install] "
+    ksys_module = register_module(
+        KSYS_MODULE_NAME,
+        "[-v|--verbose] [-c|--color] [-h|--help] [-p|--packages [-i|--install] "
         "[-r|--remove] [-l|--list] ]",
-        kerndebug_opts,
+        ksys_opts,
         OPTS_NR,
-        kerndebug_action);
+        ksys_action);
 
-    if (!kerndebug_module) {
+    if (!ksys_module) {
         return -1;
     }
 
