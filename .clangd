@@ -1,0 +1,12 @@
+# Debian clang version 14.0.6
+
+CompileFlags:
+  CompilationDatabase: build
+
+  Remove:
+    - -Werror=*
+
+Diagnostics:
+  UnusedIncludes: None
+  ClangTidy:
+    Remove: ["*"]

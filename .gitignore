@@ -1,49 +1,65 @@
-# SPDX-License-Identifier: GPL-2.0
-#
-# vim: set ts=8 sw=8 noet tw=80 cc=80 fo+=t :
+# =================
+# Out-of-tree build
+# =================
+/build/
+/install/
+/cmake-build-*/
+/out/
+/docs/
 
-# ======================================
-# Compilation & Build System (C / CMake)
-# ======================================
-build/
-cmake-build-*/
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-Makefile
-install_manifest.txt
-CTestTestfile.cmake
-compile_commands.json
-
-# Binaires & Objets C
+# ===================================
+# Binaries, libraries and C artifacts
+# ===================================
 *.o
 *.a
 *.so
 *.so.*
 *.out
 *.elf
+*.bin
+*.map
 
-# =======================
-# Scripts Shell & Tooling
-# =======================
+# =========================
+# Patches and merge residue
+# =========================
+*.orig
+*.rej
+
+# =========================
+# Testing, fuzzing and Qemu
+# =========================
+/tests/qemu/*.img
+/tests/qemu/rootfs/
+*.iso
+
+# Fuzzing outputs
+/tests/fuzz/corpus/
+/tests/fuzz/crashers/
+
+# Coverage and profiling
+*.gcda
+*.gcno
+*.gcov
+*.profraw
+
+# =========================
+# Tools, editors and system
+# =========================
+*.log
 *.clang-format-backup
 *.sh.bak
+.cache/
+.clangd/
+compile_commands.json
 
-# ==================
-# Éditeurs & Système
-# ==================
 .vscode/
 .idea/
+.vscode-ctags
 *.swp
 *.swo
 *~
 
 .DS_Store
 Thumbs.db
-
-.vscode-ctags
-build
-compile_commands.json
-.cache
 .tldr
 trash/

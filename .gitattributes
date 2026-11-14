@@ -1,44 +1,63 @@
-# SPDX-License-Identifier: GPL-2.0
-#
-# vim: set ts=8 sw=8 noet tw=80 cc=80 fo+=t :
+-text=auto eol=lf
 
-* text=auto eol=lf
-
-#
-# C files
-#
+# ===========
+# Source code
+# ===========
 *.c     text diff=cpp eol=lf
 *.h     text diff=cpp eol=lf
 *.cpp   text diff=cpp eol=lf
 *.hpp   text diff=cpp eol=lf
 
-#
-# shell scripts files
-#
+# =======
+# Scripts
+# =======
 *.sh    text eol=lf
 *.bash  text eol=lf
+*.py    text diff=python eol=lf
 
-#
-# make && cmake
-#
+# =============
+# Build systems
+# =============
 Makefile        text eol=lf
 Makefile.*      text eol=lf
 *.mk            text eol=lf
 CMakeLists.txt  text eol=lf
 *.cmake         text eol=lf
 
+# =====================================
+# Documentation, configuration and data
+# =====================================
 *.md        text eol=lf
+*.rst       text eol=lf
 *.txt       text eol=lf
 *.json      text eol=lf
 *.yml       text eol=lf
 *.yaml      text eol=lf
+*.toml      text eol=lf
 .gitignore  text eol=lf
+.gitattributes text eol=lf
+.editorconfig  text eol=lf
+.clang-format  text eol=lf
 
+docs/**     linguist-documentation
+
+# ==============================
+# Binaries, objects and archives
+# ==============================
 *.o         binary
 *.a         binary
 *.so        binary
+*.so.*      binary
 *.elf       binary
 *.bin       binary
+*.tar.gz    binary
+*.zip       binary
+
+# ====================
+# Images and resources
+# ====================
 *.png       binary
 *.jpg       binary
-*.tar.gz    binary
+*.jpeg      binary
+*.gif       binary
+*.svg       text eol=lf
